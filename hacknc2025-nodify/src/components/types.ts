@@ -8,6 +8,8 @@ export type NodeItem = {
   parentId?: NodeID | null;
   children: NodeID[];
   expanded?: boolean;
+  isDraft?: boolean;
+  size?: number; // computed bubble width
 };
 
 export type DashboardParams = {
@@ -15,4 +17,3 @@ export type DashboardParams = {
   phraseLength: number; // approximate characters per phrase
   temperature: number; // 0-2
 };
-

@@ -49,19 +49,42 @@ export async function POST(req: NextRequest) {
 
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? "[]";
-    // Try parse JSON array
-    let items: string[] = [];
-    try {
-      const parsed = JSON.parse(content);
-      if (Array.isArray(parsed)) items = parsed.map((s) => String(s));
-    } catch {
-      // Fallback: split by newlines / bullets
-      items = content
-        .split(/\n|\r|\u2022|\-/)
-        .map((s: string) => s.trim())
-        .filter(Boolean)
-        .slice(0, count);
-    }
+    // Robust extraction: try to parse fenced code, then first bracketed array, then fallback
+    const extractItems = (txt: string): string[] => {
+      const clean = txt.trim();
+      // Extract inner code fence if present
+      const fence = clean.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
+      const inner = fence ? fence[1].trim() : clean;
+      // Find first JSON array in text
+      const arrMatch = inner.match(/\[[\s\S]*?\]/);
+      const candidate = arrMatch ? arrMatch[0] : inner;
+      const tryParse = (s: string): string[] | null => {
+        try {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed)) return parsed.map((v) => String(v));
+          return null;
+        } catch {
+          return null;
+        }
+      };
+      let arr = tryParse(candidate);
+      if (!arr) {
+        // Try with single quotes swapped
+        const swapped = candidate.replace(/'(.*?)'/g, '"$1"');
+        arr = tryParse(swapped);
+      }
+      if (!arr) {
+        // Fallback: split by lines/bullets/numbers
+        arr = inner
+          .split(/\r?\n|\u2022|^-\s+/gm)
+          .map((s) => s.replace(/^[-*\d+.\)\s]+/, "").trim())
+          .filter(Boolean);
+      }
+      const n = typeof count === "number" ? count : Number(count) || 5;
+      return arr.slice(0, n);
+    };
+
+    const items = extractItems(content);
 
     return NextResponse.json({ items });
   } catch (e: unknown) {

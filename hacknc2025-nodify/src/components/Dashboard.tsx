@@ -56,9 +56,9 @@ export default function Dashboard({ open, onToggle, params, onChange }: Props) {
               <Slider
                 value={params.phraseLength}
                 onChange={(_, v) => onChange({ ...params, phraseLength: v as number })}
-                min={10}
-                max={120}
-                step={5}
+                min={1}
+                max={10}
+                step={1}
               />
             </div>
 
@@ -88,4 +88,3 @@ export default function Dashboard({ open, onToggle, params, onChange }: Props) {
     </>
   );
 }
-

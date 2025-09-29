@@ -39,11 +39,12 @@ export default function SubNode({ node, onMove, onGenerate }: Props) {
     <div ref={ref} className="absolute" style={{ left: node.x, top: node.y }}>
       <Paper
         elevation={2}
-        className="px-2 py-1 rounded-lg bg-white/90 backdrop-blur shadow border border-slate-200 min-w-[120px]"
+        className="px-3 py-2 rounded-lg bg-white/90 backdrop-blur shadow border border-slate-200"
         onMouseDown={start}
         onDoubleClick={() => onGenerate(node.id)}
+        style={{ width: Math.max(120, Math.min(node.size ?? 140, 420)) }}
       >
-        <div className="text-slate-700 text-sm leading-tight truncate max-w-[200px]">
+        <div className="text-slate-700 text-sm leading-tight whitespace-pre-wrap break-words">
           {node.text}
         </div>
       </Paper>
