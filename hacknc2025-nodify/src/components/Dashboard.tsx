@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Drawer, IconButton, Slider, TextField, Typography, Box } from "@mui/material";
-import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
+import DashboardRoundedIcon from "@mui/icons-material/DashboardRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import { DashboardParams } from "./types";
 
@@ -16,14 +16,37 @@ type Props = {
 export default function Dashboard({ open, onToggle, params, onChange }: Props) {
   return (
     <>
-      <IconButton
-        aria-label="open settings"
+      {/* Floating Dashboard Button - Expands on Hover */}
+      <button
         onClick={onToggle}
-        className="fixed top-4 right-4 z-50 bg-white/80 hover:bg-white shadow-md"
-        size="large"
+        className={`fixed bottom-6 right-6 z-50 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 group overflow-hidden ${
+          open 
+            ? "bg-gray-600 hover:bg-gray-700 text-white" 
+            : "bg-gray-700 hover:bg-gray-800 text-white"
+        }`}
+        style={{
+          width: '56px',
+          height: '56px',
+          padding: '16px'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.width = '140px';
+          e.currentTarget.style.paddingRight = '20px';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.width = '56px';
+          e.currentTarget.style.paddingRight = '16px';
+        }}
+        aria-label={open ? "Close Dashboard" : "Open Dashboard"}
       >
-        <SettingsRoundedIcon />
-      </IconButton>
+        <DashboardRoundedIcon className="text-xl flex-shrink-0" />
+        <span className="text-sm font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          {open ? "Close" : "Dashboard"}
+        </span>
+        {!open && (
+          <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping"></div>
+        )}
+      </button>
 
       <Drawer anchor="right" open={open} onClose={onToggle}>
         <Box sx={{ width: 340, p: 3 }} role="presentation">

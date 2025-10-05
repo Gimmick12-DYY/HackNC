@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import NodeCard from "./Node";
 import { DashboardParams, NodeItem } from "./types";
 
@@ -15,6 +15,8 @@ export default function Canvas({ params }: Props) {
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const canvasRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
 
   const nextId = () => `n_${idRef.current++}`;
@@ -23,6 +25,17 @@ export default function Canvas({ params }: Props) {
     const len = text.trim().length;
     const w = 140 + len * 6; // 6px per char heuristic
     return Math.max(140, Math.min(w, 420));
+  };
+
+  const constrainPosition = (x: number, y: number, nodeSize: number = 160) => {
+    const padding = 20; // Keep nodes away from edges
+    const maxX = Math.max(0, canvasSize.width - nodeSize - padding);
+    const maxY = Math.max(0, canvasSize.height - nodeSize - padding);
+    
+    return {
+      x: Math.max(padding, Math.min(x, maxX)),
+      y: Math.max(padding, Math.min(y, maxY))
+    };
   };
 
   const addNodeAt = (x: number, y: number, parentId?: string | null, text = "") => {
@@ -65,7 +78,10 @@ export default function Canvas({ params }: Props) {
   };
 
   const onMove = (id: string, x: number, y: number) => {
-    setNodes((prev) => ({ ...prev, [id]: { ...prev[id], x, y } }));
+    const node = nodes[id];
+    const nodeSize = node?.size ?? 160;
+    const constrained = constrainPosition(x, y, nodeSize);
+    setNodes((prev) => ({ ...prev, [id]: { ...prev[id], x: constrained.x, y: constrained.y } }));
   };
 
   const onText = (id: string, text: string) => {
@@ -79,6 +95,39 @@ export default function Canvas({ params }: Props) {
     setNodes((prev) => ({ ...prev, [id]: { ...prev[id], isDraft: false } }));
     if (draftId === id) setDraftId(null);
   };
+
+  // Handle window resize and constrain existing nodes
+  useEffect(() => {
+    const updateCanvasSize = () => {
+      if (canvasRef.current) {
+        const rect = canvasRef.current.getBoundingClientRect();
+        setCanvasSize({ width: rect.width, height: rect.height });
+      }
+    };
+
+    // Initial size
+    updateCanvasSize();
+
+    // Listen for resize
+    window.addEventListener('resize', updateCanvasSize);
+    return () => window.removeEventListener('resize', updateCanvasSize);
+  }, []);
+
+  // Constrain all nodes when canvas size changes
+  useEffect(() => {
+    if (canvasSize.width > 0 && canvasSize.height > 0) {
+      setNodes((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach(id => {
+          const node = updated[id];
+          const nodeSize = node.size ?? 160;
+          const constrained = constrainPosition(node.x, node.y, nodeSize);
+          updated[id] = { ...node, x: constrained.x, y: constrained.y };
+        });
+        return updated;
+      });
+    }
+  }, [canvasSize]);
 
   const arrangeAround = (cx: number, cy: number, count: number, radius: number) => {
     return Array.from({ length: count }).map((_, i) => {
@@ -177,6 +226,7 @@ export default function Canvas({ params }: Props) {
 
   return (
     <div
+      ref={canvasRef}
       className="relative w-full h-[calc(100vh-64px)] bg-gradient-to-br from-[#f7f2e8] to-[#f3eadb] overflow-hidden"
       onClick={onCanvasClick}
     >
@@ -199,7 +249,7 @@ export default function Canvas({ params }: Props) {
         />
       ))}
 
-      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-slate-500 text-sm bg-white/70 backdrop-blur rounded-full px-3 py-1 shadow">
+      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-slate-500 text-sm bg-white/70 backdrop-blur rounded-full px-3 py-1 shadow select-none" style={{ caretColor: 'transparent' }}>
         Click anywhere to add a node. Drag to reposition. Press Enter or sparkle to expand.
       </div>
     </div>
