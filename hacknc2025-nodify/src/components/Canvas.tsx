@@ -21,8 +21,23 @@ export default function Canvas({ params }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'canvas' | 'node'; nodeId?: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ 
+    x: number; 
+    y: number; 
+    originalX: number; 
+    originalY: number; 
+    type: 'canvas' | 'node'; 
+    nodeId?: string 
+  } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  
+  // 视口状态：缩放和平移
+  const [scale, setScale] = useState(1);
+  const [offsetX, setOffsetX] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null);
+  
   const draggingNodesRef = useRef(new Set<string>());
   const canvasRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
@@ -35,21 +50,30 @@ export default function Canvas({ params }: Props) {
     return Math.max(140, Math.min(w, 420));
   };
 
-  const constrainPosition = useCallback((x: number, y: number, nodeSize: number = 160) => {
-    // If canvas size not initialized yet, return position as-is
-    if (canvasSize.width === 0 || canvasSize.height === 0) {
-      return { x, y };
-    }
+  // 屏幕坐标转换为canvas坐标
+  const screenToCanvas = (screenX: number, screenY: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: screenX, y: screenY };
     
-    const padding = 20; // Keep nodes away from edges
-    const maxX = Math.max(0, canvasSize.width - nodeSize - padding);
-    const maxY = Math.max(0, canvasSize.height - nodeSize - padding);
+    const canvasX = screenX - rect.left;
+    const canvasY = screenY - rect.top;
     
+    // 转换为世界坐标（考虑缩放和偏移）
+    const worldX = (canvasX - offsetX) / scale;
+    const worldY = (canvasY - offsetY) / scale;
+    
+    return { x: worldX, y: worldY };
+  };
+
+  // canvas坐标转换为屏幕坐标
+  const canvasToScreen = (canvasX: number, canvasY: number) => {
     return {
-      x: Math.max(padding, Math.min(x, maxX)),
-      y: Math.max(padding, Math.min(y, maxY))
+      x: canvasX * scale + offsetX,
+      y: canvasY * scale + offsetY
     };
-  }, [canvasSize.width, canvasSize.height]);
+  };
+
+
 
   // Check if two nodes are colliding
   const checkCollision = (node1: { x: number; y: number; size?: number }, node2: { x: number; y: number; size?: number }) => {
@@ -86,7 +110,8 @@ export default function Canvas({ params }: Props) {
       }
       
       if (!hasCollision) {
-        return constrainPosition(x, y, nodeSize);
+        // No boundary constraints - return position as is
+        return { x, y };
       }
       
       // Try a new position in a spiral pattern
@@ -97,8 +122,8 @@ export default function Canvas({ params }: Props) {
       attempts++;
     }
     
-    // If no non-colliding position found, return constrained target position
-    return constrainPosition(targetX, targetY, nodeSize);
+    // If no non-colliding position found, return target position without constraints
+    return { x: targetX, y: targetY };
   };
 
   const addNodeAt = (x: number, y: number, parentId?: string | null, text = "") => {
@@ -125,8 +150,63 @@ export default function Canvas({ params }: Props) {
     return id;
   };
 
+  // 鼠标滚轮缩放事件
+  const onCanvasWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    
+    // 获取画布相对坐标
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // 计算缩放因子
+    const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = Math.max(0.2, Math.min(3, scale * scaleFactor));
+    
+    // 计算以鼠标位置为中心的缩放偏移
+    const scaleChange = newScale / scale;
+    const newOffsetX = mouseX - (mouseX - offsetX) * scaleChange;
+    const newOffsetY = mouseY - (mouseY - offsetY) * scaleChange;
+    
+    setScale(newScale);
+    setOffsetX(newOffsetX);
+    setOffsetY(newOffsetY);
+  };
+
+  // 鼠标中键平移事件
+  const onCanvasMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 1) { // 中键
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - offsetX, y: e.clientY - offsetY });
+      // 阻止浏览器默认的中键滚动行为
+      document.body.style.overflow = 'hidden';
+    }
+  };
+
+  const onCanvasMouseMove = (e: React.MouseEvent) => {
+    if (isPanning && panStart) {
+      setOffsetX(e.clientX - panStart.x);
+      setOffsetY(e.clientY - panStart.y);
+    }
+  };
+
+  const onCanvasMouseUp = (e: React.MouseEvent) => {
+    if (e.button === 1) { // 中键
+      setIsPanning(false);
+      setPanStart(null);
+      document.body.style.overflow = '';
+    }
+  };
+
   const onCanvasClick = (e: React.MouseEvent) => {
-    if (e.currentTarget !== e.target) return; // ignore clicks on children
+    // 检查是否点击了节点
+    const target = e.target as HTMLElement;
+    if (target.closest('.node-card')) {
+      return; // 点击在节点上，忽略
+    }
     
     // Hide context menu if visible
     setContextMenu(null);
@@ -137,7 +217,15 @@ export default function Canvas({ params }: Props) {
 
   const onCanvasContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (e.currentTarget !== e.target) return; // ignore right clicks on children
+    
+    // 检查是否右键点击了节点
+    const target = e.target as HTMLElement;
+    if (target.closest('.node-card')) {
+      return; // 右键点击在节点上，忽略
+    }
+    
+    // 防止在平移过程中触发右键菜单
+    if (isPanning) return;
     
     // Calculate menu position with boundary checking
     const menuWidth = 180;
@@ -161,23 +249,29 @@ export default function Canvas({ params }: Props) {
     x = Math.max(padding, x);
     y = Math.max(padding, y);
     
-    setContextMenu({ x, y, type: 'canvas' });
+    setContextMenu({ 
+      x, 
+      y, 
+      originalX: e.clientX, 
+      originalY: e.clientY, 
+      type: 'canvas' 
+    });
   };
 
   const onGenerateNewNode = () => {
-    if (!contextMenu) return;
+    if (!contextMenu || !canvasRef.current) {
+      return;
+    }
     
-    // Calculate position relative to canvas
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    
-    const targetX = contextMenu.x - rect.left;
-    const targetY = contextMenu.y - rect.top;
+    // 将右键点击的屏幕坐标转换为世界坐标
+    const worldPos = screenToCanvas(contextMenu.originalX, contextMenu.originalY);
     
     // Find non-colliding position
     const id = nextId();
     const nodeSize = computeSize("");
-    const position = findNonCollidingPosition(targetX, targetY, id, nodeSize);
+    
+    // 直接使用世界坐标，不做碰撞检测
+    const position = { x: worldPos.x, y: worldPos.y };
     
     // Create node without draft status (already confirmed)
     const node: NodeItem = {
@@ -193,6 +287,51 @@ export default function Canvas({ params }: Props) {
     setNodes((prev) => ({ ...prev, [id]: node }));
     setSelectedId(id);
     
+    setContextMenu(null); // Hide menu after action
+  };
+
+  // 用于跟踪动画帧的引用
+  const animationFrameRef = useRef<number | null>(null);
+
+  // 重置相机到初始位置
+  const onResetCamera = () => {
+    // 取消之前可能存在的动画
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    
+    // 使用平滑动画重置相机
+    const startScale = scale;
+    const startOffsetX = offsetX;
+    const startOffsetY = offsetY;
+    const duration = 500; // 动画持续时间（毫秒）
+    const startTime = Date.now();
+    
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // 使用easeOutCubic缓动函数
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+      
+      const newScale = startScale + (1 - startScale) * easeProgress;
+      const newOffsetX = startOffsetX + (0 - startOffsetX) * easeProgress;
+      const newOffsetY = startOffsetY + (0 - startOffsetY) * easeProgress;
+      
+      // 批量更新状态
+      setScale(newScale);
+      setOffsetX(newOffsetX);
+      setOffsetY(newOffsetY);
+      
+      if (progress < 1) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        animationFrameRef.current = null;
+      }
+    };
+    
+    animationFrameRef.current = requestAnimationFrame(animate);
     setContextMenu(null); // Hide menu after action
   };
 
@@ -255,7 +394,14 @@ export default function Canvas({ params }: Props) {
     x = Math.max(padding, x);
     y = Math.max(padding, y);
     
-    setContextMenu({ x, y, type: 'node', nodeId });
+    setContextMenu({ 
+      x, 
+      y, 
+      originalX: e.clientX, 
+      originalY: e.clientY, 
+      type: 'node', 
+      nodeId 
+    });
   }, []);
 
   const onMove = useCallback((id: string, x: number, y: number) => {
@@ -267,15 +413,20 @@ export default function Canvas({ params }: Props) {
       draggingNodesRef.current.add(id);
     }
     
-    // During drag, just update position without collision detection
-    // Use functional update to avoid dependency on nodes state
+    // During drag, just update position without constraint - let user drag freely
+    // Constraints will be applied in onMoveEnd
     setNodes((prev) => {
       const node = prev[id];
-      const nodeSize = node?.size ?? 160;
-      const constrained = constrainPosition(x, y, nodeSize);
-      return { ...prev, [id]: { ...prev[id], x: constrained.x, y: constrained.y } };
+      if (!node || (node.x === x && node.y === y)) {
+        return prev; // No change needed
+      }
+      
+      return {
+        ...prev,
+        [id]: { ...node, x, y }
+      };
     });
-  }, [constrainPosition]);
+  }, []);
 
   const onMoveEnd = useCallback((id: string, x: number, y: number, originalX?: number, originalY?: number) => {
     setNodes((currentNodes) => {
@@ -283,8 +434,9 @@ export default function Canvas({ params }: Props) {
       if (!node) return currentNodes;
       
       const nodeSize = node.size ?? 160;
-      const constrained = constrainPosition(x, y, nodeSize);
-      const targetPosition = { x: constrained.x, y: constrained.y, size: nodeSize };
+      
+      // No canvas boundary constraints - allow nodes to move freely anywhere
+      const targetPosition = { x, y, size: nodeSize };
       
       // Check for collisions with other nodes
       let hasCollision = false;
@@ -301,7 +453,7 @@ export default function Canvas({ params }: Props) {
         // Collision detected - first move to target position to show the "impact"
         const impactUpdate = {
           ...currentNodes,
-          [id]: { ...currentNodes[id], x: constrained.x, y: constrained.y }
+          [id]: { ...currentNodes[id], x, y }
         };
         
         // Validate and find safe bounce-back position
@@ -321,42 +473,43 @@ export default function Canvas({ params }: Props) {
         
         // If original position now has collision, find a nearby safe position
         if (originalPositionHasCollision) {
-          // Inline position finding to avoid dependency on nodes state
-          let x = originalX;
-          let y = originalY;
+          // Find a new safe position using spiral pattern
+          let testX = originalX;
+          let testY = originalY;
           let attempts = 0;
           const maxAttempts = 50;
           
           while (attempts < maxAttempts) {
-            const testNode = { x, y, size: nodeSize };
-            let hasCollision = false;
+            const testNode = { x: testX, y: testY, size: nodeSize };
+            let hasTestCollision = false;
             
             // Check against all other nodes
             for (const otherNode of Object.values(currentNodes)) {
               if (otherNode.id === id || otherNode.minimized) continue;
               
               if (checkCollision(testNode, otherNode)) {
-                hasCollision = true;
+                hasTestCollision = true;
                 break;
               }
             }
             
-            if (!hasCollision) {
-              bounceBackPosition = constrainPosition(x, y, nodeSize);
+            if (!hasTestCollision) {
+              // No boundary constraints - use position as is
+              bounceBackPosition = { x: testX, y: testY };
               break;
             }
             
             // Try a new position in a spiral pattern
             const angle = (attempts * 0.5) % (2 * Math.PI);
             const radius = 20 + attempts * 5;
-            x = originalX + Math.cos(angle) * radius;
-            y = originalY + Math.sin(angle) * radius;
+            testX = originalX + Math.cos(angle) * radius;
+            testY = originalY + Math.sin(angle) * radius;
             attempts++;
           }
           
-          // If no non-colliding position found, use constrained original position
+          // If no non-colliding position found, use original position anyway
           if (attempts >= maxAttempts) {
-            bounceBackPosition = constrainPosition(originalX, originalY, nodeSize);
+            bounceBackPosition = { x: originalX, y: originalY };
           }
         }
         
@@ -370,8 +523,8 @@ export default function Canvas({ params }: Props) {
         
         return impactUpdate;
       } else if (!hasCollision) {
-        // No collision, finalize the move
-        return { ...currentNodes, [id]: { ...currentNodes[id], x: constrained.x, y: constrained.y } };
+        // No collision, finalize the move - no boundary constraints
+        return { ...currentNodes, [id]: { ...currentNodes[id], x, y } };
       }
       
       // If collision but no original position provided, just keep current position
@@ -383,7 +536,7 @@ export default function Canvas({ params }: Props) {
     if (draggingNodesRef.current.size === 0) {
       setIsDragging(false);
     }
-  }, [constrainPosition]);
+  }, []);
 
   const onText = useCallback((id: string, text: string) => {
     setNodes((prev) => ({
@@ -459,21 +612,7 @@ export default function Canvas({ params }: Props) {
     return () => window.removeEventListener('resize', updateCanvasSize);
   }, []);
 
-  // Constrain all nodes when canvas size changes
-  useEffect(() => {
-    if (canvasSize.width > 0 && canvasSize.height > 0) {
-      setNodes((prev) => {
-        const updated = { ...prev };
-        Object.keys(updated).forEach(id => {
-          const node = updated[id];
-          const nodeSize = node.size ?? 160;
-          const constrained = constrainPosition(node.x, node.y, nodeSize);
-          updated[id] = { ...node, x: constrained.x, y: constrained.y };
-        });
-        return updated;
-      });
-    }
-  }, [canvasSize]);
+
 
   // Close context menu when clicking outside or pressing escape
   useEffect(() => {
@@ -489,16 +628,66 @@ export default function Canvas({ params }: Props) {
       }
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + 0 重置相机
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault();
+        onResetCamera();
+      }
+    };
+
     if (contextMenu) {
       document.addEventListener('click', handleClickOutside);
       document.addEventListener('keydown', handleEscape);
     }
 
+    // 添加全局键盘快捷键监听
+    document.addEventListener('keydown', handleKeyDown);
+
     return () => {
       document.removeEventListener('click', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [contextMenu]);
+
+  // 全局鼠标事件处理（平移功能）
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (isPanning && panStart) {
+        setOffsetX(e.clientX - panStart.x);
+        setOffsetY(e.clientY - panStart.y);
+      }
+    };
+
+    const handleGlobalMouseUp = (e: MouseEvent) => {
+      if (isPanning) {
+        setIsPanning(false);
+        setPanStart(null);
+        document.body.style.overflow = '';
+      }
+    };
+
+    if (isPanning) {
+      document.addEventListener('mousemove', handleGlobalMouseMove);
+      document.addEventListener('mouseup', handleGlobalMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [isPanning, panStart]);
+
+  // 组件卸载时清理动画帧
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, []);
 
   // 重写的智能散布算法
   const arrangeAroundSmart = (centerX: number, centerY: number, childCount: number, parentId: string) => {
@@ -521,18 +710,18 @@ export default function Canvas({ params }: Props) {
     
     // 检查位置是否安全（不与其他节点重叠）
     const isSafePosition = (x: number, y: number) => {
-      const minSafeDistance = 170; // 节点之间的最小安全距离
+      const minSafeDistance = 180; // 节点之间的最小安全距离
       
-      // 检查与现有节点的距离
+      // 检查与现有节点的距离（现有节点的坐标需要转换为中心点）
       for (const existing of existingNodes) {
-        const nodeX = existing.x + (existing.size || 160) / 2;
-        const nodeY = existing.y + (existing.size || 160) / 2;
-        if (getDistance(x, y, nodeX, nodeY) < minSafeDistance) {
+        const existingCenterX = existing.x + (existing.size || 160) / 2;
+        const existingCenterY = existing.y + (existing.size || 160) / 2;
+        if (getDistance(x, y, existingCenterX, existingCenterY) < minSafeDistance) {
           return false;
         }
       }
       
-      // 检查与已经安排的子节点位置的距离
+      // 检查与已经安排的子节点位置的距离（positions中存储的是中心点坐标）
       for (const pos of positions) {
         if (getDistance(x, y, pos.x, pos.y) < minSafeDistance) {
           return false;
@@ -646,7 +835,11 @@ export default function Canvas({ params }: Props) {
         const childEdges: [string, string][] = [];
         
         // Calculate smart positions for child nodes
-        const positions = arrangeAroundSmart(nodeData.x + 80, nodeData.y + 80, items.length, id);
+        // 使用父节点的中心点作为起始坐标
+        const parentCenterX = nodeData.x + (nodeData.size || 160) / 2;
+        const parentCenterY = nodeData.y + (nodeData.size || 160) / 2;
+        
+        const positions = arrangeAroundSmart(parentCenterX, parentCenterY, items.length, id);
         
         // Update nodes with new children
         setNodes((prev) => {
@@ -658,15 +851,20 @@ export default function Canvas({ params }: Props) {
           items.forEach((text, idx) => {
             const childId = nextId();
             const finalPosition = positions[idx];
+            const childSize = computeSize(text);
+            const finalX = finalPosition ? finalPosition.x - childSize / 2 : (nodeData?.x || 0);
+            const finalY = finalPosition ? finalPosition.y - childSize / 2 : (nodeData?.y || 0);
+            
             updated[childId] = {
               id: childId,
               text,
-              x: finalPosition ? finalPosition.x - 80 : (nodeData?.x || 0),
-              y: finalPosition ? finalPosition.y - 80 : (nodeData?.y || 0),
+              // 子节点位置应该是中心点减去节点尺寸的一半
+              x: finalX,
+              y: finalY,
               parentId: id,
               children: [],
               isDraft: false,
-              size: computeSize(text),
+              size: childSize,
             };
             childIds.push(childId);
             childEdges.push([id, childId]);
@@ -693,72 +891,168 @@ export default function Canvas({ params }: Props) {
         const parent = nodes[p];
         const child = nodes[c];
         if (!parent || !child) return null;
-        const pX = parent.x + (parent.size ?? 160) / 2;
-        const pY = parent.y + (parent.size ?? 160) / 2;
-        const cX = child.x + (child.size ?? 140) / 2;
-        const cY = child.y + (child.size ?? 140) / 2;
+        
+        // 确保使用正确的节点尺寸计算中心点
+        const parentSize = parent.size ?? 160;
+        const childSize = child.size ?? 160; // 使用相同的默认尺寸
+        
+        const pX = parent.x + parentSize / 2;
+        const pY = parent.y + parentSize / 2;
+        const cX = child.x + childSize / 2;
+        const cY = child.y + childSize / 2;
+        
         return { pX, pY, cX, cY, key: `${p}-${c}` };
       })
       .filter(Boolean) as Array<{ pX: number; pY: number; cX: number; cY: number; key: string }>;
     return pairs;
   }, [edges, nodes]);
 
+  // 生成网格背景
+  const gridSize = 50; // 基础网格大小
+  const gridPattern = useMemo(() => {
+    // 计算适应缩放的网格大小
+    let actualGridSize = gridSize;
+    let currentScale = scale;
+    
+    // 当缩放过小时，使用更大的网格
+    while (actualGridSize * currentScale < 20 && actualGridSize < 200) {
+      actualGridSize *= 2;
+    }
+    
+    // 当缩放过大时，使用更小的网格
+    while (actualGridSize * currentScale > 200 && actualGridSize > 12.5) {
+      actualGridSize /= 2;
+    }
+    
+    const scaledGridSize = actualGridSize * scale;
+    const adjustedOffsetX = (offsetX % scaledGridSize + scaledGridSize) % scaledGridSize;
+    const adjustedOffsetY = (offsetY % scaledGridSize + scaledGridSize) % scaledGridSize;
+    
+    // 根据缩放级别调整网格透明度 - 增强可见性
+    const lineOpacity = Math.min(Math.max(0.5, scale * 0.3), 0.8);
+    const dotOpacity = Math.min(Math.max(0.4, scale * 0.4), 0.7);
+    
+    return {
+      size: scaledGridSize,
+      offsetX: adjustedOffsetX,
+      offsetY: adjustedOffsetY,
+      lineOpacity,
+      dotOpacity
+    };
+  }, [scale, offsetX, offsetY]);
+
   return (
     <div
       ref={canvasRef}
-      className="relative w-full h-[calc(100vh-64px)] bg-gradient-to-br from-[#f7f2e8] to-[#f3eadb] overflow-hidden"
+      className="relative w-full h-[calc(100vh-64px)] overflow-hidden"
       onClick={onCanvasClick}
       onContextMenu={onCanvasContextMenu}
+      onWheel={onCanvasWheel}
+      onMouseDown={onCanvasMouseDown}
+      onMouseMove={onCanvasMouseMove}
+      onMouseUp={onCanvasMouseUp}
+      style={{
+        cursor: isPanning ? 'grabbing' : 'default',
+        background: `
+          linear-gradient(90deg, transparent ${gridPattern.size - 1}px, rgba(156, 163, 175, ${gridPattern.lineOpacity}) 1px),
+          linear-gradient(transparent ${gridPattern.size - 1}px, rgba(156, 163, 175, ${gridPattern.lineOpacity}) 1px),
+          linear-gradient(135deg, #f7f2e8 0%, #f3eadb 100%)
+        `,
+        backgroundSize: `${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, 100% 100%`,
+        backgroundPosition: `${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, 0 0`
+      }}
     >
-      <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%">
-        {lines.map(({ pX, pY, cX, cY, key }) => (
-          <motion.line
-            key={key}
-            animate={{
-              x1: pX,
-              y1: pY,
-              x2: cX,
-              y2: cY,
+      {/* 变换容器 - 应用缩放和平移 */}
+      <div
+        className="absolute inset-0"
+        style={{
+          transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
+          transformOrigin: '0 0'
+        }}
+        onClick={onCanvasClick}
+        onContextMenu={onCanvasContextMenu}
+      >
+        <svg 
+          className="absolute inset-0 pointer-events-none" 
+          width="100%" 
+          height="100%"
+          style={{ 
+            overflow: 'visible'
+          }}
+        >
+          {/* 中心点原点标记 */}
+          <circle
+            cx={0}
+            cy={0}
+            r={6}
+            fill="rgba(239, 68, 68, 0.8)"
+            stroke="rgba(239, 68, 68, 1)"
+            strokeWidth={2}
+            style={{ 
+              vectorEffect: 'non-scaling-stroke' // 保持圆圈大小不受缩放影响
             }}
-            initial={{
-              x1: pX,
-              y1: pY,
-              x2: cX,
-              y2: cY,
-            }}
-            transition={
-              isDragging
-                ? { duration: 0 }  // Immediate response during drag
-                : {
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 25,
-                    mass: 0.8,
-                    duration: 0.4,
-                  }
-            }
-            stroke="#94a3b8"
-            strokeWidth={1.5}
+          />
+          <circle
+            cx={0}
+            cy={0}
+            r={2}
+            fill="white"
+          />
+          
+          {lines.map(({ pX, pY, cX, cY, key }) => (
+            <motion.line
+              key={key}
+              animate={{
+                x1: pX,
+                y1: pY,
+                x2: cX,
+                y2: cY,
+              }}
+              initial={{
+                x1: pX,
+                y1: pY,
+                x2: cX,
+                y2: cY,
+              }}
+              transition={
+                isDragging
+                  ? { duration: 0 }  // Immediate response during drag
+                  : {
+                      type: "spring",
+                      stiffness: 300,
+                      damping: 25,
+                      mass: 0.8,
+                      duration: 0.4,
+                    }
+              }
+              stroke="#94a3b8"
+              strokeWidth={1.5}
+              style={{ 
+                vectorEffect: 'non-scaling-stroke' // 保持线条粗细不受缩放影响
+              }}
+            />
+          ))}
+        </svg>
+
+        {Object.values(nodes).map((n) => (
+          <NodeCard
+            key={n.id}
+            node={n}
+            onMove={onMove}
+            onMoveEnd={onMoveEnd}
+            onText={onText}
+            onGenerate={onGenerate}
+            onConfirm={onConfirm}
+            onDelete={onDelete}
+            onMinimize={onMinimize}
+            onContextMenu={onNodeContextMenu}
+            highlight={selectedId === n.id}
+            readOnly={!!n.parentId}
+            screenToCanvas={screenToCanvas}
+            canvasToScreen={canvasToScreen}
           />
         ))}
-      </svg>
-
-      {Object.values(nodes).map((n) => (
-        <NodeCard
-          key={n.id}
-          node={n}
-          onMove={onMove}
-          onMoveEnd={onMoveEnd}
-          onText={onText}
-          onGenerate={onGenerate}
-          onConfirm={onConfirm}
-          onDelete={onDelete}
-          onMinimize={onMinimize}
-          onContextMenu={onNodeContextMenu}
-          highlight={selectedId === n.id}
-          readOnly={!!n.parentId}
-        />
-      ))}
+      </div>
 
       {/* Context Menu - Render in Portal for consistent positioning */}
       {contextMenu && typeof document !== 'undefined' && createPortal(
@@ -771,13 +1065,22 @@ export default function Canvas({ params }: Props) {
           onClick={(e) => e.stopPropagation()}
         >
           {contextMenu.type === 'canvas' ? (
-            <button
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-              onClick={onGenerateNewNode}
-            >
-              <span className="text-blue-500">✨</span>
-              Generate New Node
-            </button>
+            <>
+              <button
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                onClick={onGenerateNewNode}
+              >
+                <span className="text-blue-500">✨</span>
+                Generate New Node
+              </button>
+              <button
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                onClick={onResetCamera}
+              >
+                <span className="text-green-500">🎯</span>
+                Reset Camera View
+              </button>
+            </>
           ) : contextMenu.type === 'node' && contextMenu.nodeId ? (
             <>
               <button
@@ -808,7 +1111,7 @@ export default function Canvas({ params }: Props) {
       )}
 
       <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-slate-500 text-sm bg-white/70 backdrop-blur rounded-full px-3 py-1 shadow select-none" style={{ caretColor: 'transparent' }}>
-        Right-click anywhere to add a node. Drag to reposition. Press Enter or sparkle to expand.
+        Scroll to zoom • Middle-click drag to pan • Right-click to add node or reset camera • Ctrl+0 to reset view • Drag to reposition
       </div>
     </div>
   );
