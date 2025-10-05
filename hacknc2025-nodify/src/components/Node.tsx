@@ -24,6 +24,7 @@ export default function NodeCard({ node, onMove, onText, onGenerate, onConfirm, 
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -55,17 +56,36 @@ export default function NodeCard({ node, onMove, onText, onGenerate, onConfirm, 
     }
   };
 
+  const handleDelete = () => {
+    setIsDeleting(true);
+    // Wait for animation to complete before actually deleting
+    setTimeout(() => {
+      onDelete?.(node.id);
+    }, 500); // Match animation duration
+  };
+
   return (
     <motion.div
       ref={ref}
-      className={`absolute select-none ${highlight ? "ring-2 ring-sky-400" : ""}`}
+      className="absolute select-none"
       style={{ left: node.x, top: node.y }}
       initial={{ scale: 0.6, opacity: 0.5 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={{ type: "spring", stiffness: 220, damping: 18, mass: 0.8 }}
+      animate={{ 
+        scale: isDeleting ? 0 : 1, 
+        opacity: isDeleting ? 0 : 1,
+        width: diameter,
+        height: diameter,
+        rotate: isDeleting ? 180 : 0
+      }}
+      transition={{ 
+        type: "spring", 
+        stiffness: 300, 
+        damping: 25, 
+        mass: 0.8,
+        duration: isDeleting ? 0.5 : 0.4
+      }}
     >
-      <Paper
-        elevation={4}
+      <motion.div
         className={`rounded-full backdrop-blur shadow-md border flex items-center justify-center text-center ${
           node.minimized 
             ? 'border-transparent' 
@@ -73,79 +93,109 @@ export default function NodeCard({ node, onMove, onText, onGenerate, onConfirm, 
         }`}
         onMouseDown={startDrag}
         onClick={() => {
-          if (readOnly) onGenerate(node.id);
+          if (node.minimized) {
+            // Restore minimized node
+            onMinimize?.(node.id);
+          } else if (readOnly) {
+            onGenerate(node.id);
+          }
         }}
-        style={{ 
-          width: diameter, 
+        animate={{
+          width: diameter,
           height: diameter,
-          backgroundColor: node.minimized ? node.dotColor : undefined
+          backgroundColor: node.minimized ? node.dotColor : '#fffaf3',
+          scale: node.minimized ? 0.8 : 1,
+        }}
+        transition={{
+          type: "spring",
+          stiffness: 400,
+          damping: 30,
+          mass: 0.6,
+          duration: 0.5
+        }}
+        style={{
+          boxShadow: node.minimized 
+            ? '0 2px 8px rgba(0,0,0,0.15)' 
+            : '0 4px 16px rgba(0,0,0,0.1)'
         }}
       >
-        {node.minimized ? null : (
-          readOnly ? (
-            <div className="text-slate-800 text-sm whitespace-pre-wrap break-words leading-snug">
-              {node.text}
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 w-full">
-              <TextField
-                variant="standard"
-                placeholder="Type an idea…"
-                value={node.text}
-                onChange={(e) => onText(node.id, e.target.value)}
-                onKeyDown={onKey}
-                InputProps={{ disableUnderline: false }}
-                multiline
-                className="flex-1"
-              />
-              <div className="flex flex-col gap-1">
-                <Tooltip title="Minimize">
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onMinimize?.(node.id);
-                    }}
-                    sx={{ 
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      '& .MuiSvgIcon-root': {
-                        margin: 0
-                      }
-                    }}
-                  >
-                    <MinimizeRoundedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="Expand with AI">
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onConfirm(node.id);
-                      onGenerate(node.id);
-                    }}
-                  >
-                    <AutoAwesomeRoundedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="Delete Node">
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete?.(node.id);
-                    }}
-                  >
-                    <CloseRoundedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
+        <motion.div
+          animate={{
+            opacity: node.minimized ? 0 : 1,
+            scale: node.minimized ? 0.8 : 1,
+          }}
+          transition={{
+            duration: 0.3,
+            ease: "easeInOut"
+          }}
+        >
+          {node.minimized ? null : (
+            readOnly ? (
+              <div className="text-slate-800 text-sm whitespace-pre-wrap break-words leading-snug">
+                {node.text}
               </div>
-            </div>
-          )
-        )}
-      </Paper>
+            ) : (
+              <div className="flex items-center gap-2 w-full">
+                <TextField
+                  variant="standard"
+                  placeholder="Type an idea…"
+                  value={node.text}
+                  onChange={(e) => onText(node.id, e.target.value)}
+                  onKeyDown={onKey}
+                  InputProps={{ disableUnderline: false }}
+                  multiline
+                  className="flex-1"
+                />
+                <div className="flex flex-col gap-1">
+                  <Tooltip title="Minimize">
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onMinimize?.(node.id);
+                      }}
+                      sx={{ 
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        '& .MuiSvgIcon-root': {
+                          margin: 0
+                        }
+                      }}
+                    >
+                      <MinimizeRoundedIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Expand with AI">
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onConfirm(node.id);
+                        onGenerate(node.id);
+                      }}
+                    >
+                      <AutoAwesomeRoundedIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Delete Node">
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete();
+                      }}
+                      disabled={isDeleting}
+                    >
+                      <CloseRoundedIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </div>
+              </div>
+            )
+          )}
+        </motion.div>
+      </motion.div>
     </motion.div>
   );
 }

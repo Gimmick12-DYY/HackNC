@@ -110,20 +110,34 @@ export default function Canvas({ params }: Props) {
   };
 
   const onMinimize = (id: string) => {
-    const colors = ['#3b82f6', '#eab308', '#22c55e', '#ef4444', '#8b5cf6', '#f97316', '#06b6d4', '#84cc16'];
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
-    
     setNodes((prev) => {
       const node = prev[id];
       if (!node) return prev;
-      return { 
-        ...prev, 
-        [id]: { 
-          ...node, 
-          minimized: true, 
-          dotColor: randomColor 
-        } 
-      };
+      
+      if (node.minimized) {
+        // Restore the node
+        return { 
+          ...prev, 
+          [id]: { 
+            ...node, 
+            minimized: false,
+            dotColor: undefined
+          } 
+        };
+      } else {
+        // Minimize the node
+        const colors = ['#3b82f6', '#eab308', '#22c55e', '#ef4444', '#8b5cf6', '#f97316', '#06b6d4', '#84cc16'];
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+        
+        return { 
+          ...prev, 
+          [id]: { 
+            ...node, 
+            minimized: true, 
+            dotColor: randomColor 
+          } 
+        };
+      }
     });
   };
 
