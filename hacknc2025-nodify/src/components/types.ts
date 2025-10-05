@@ -10,6 +10,8 @@ export type NodeItem = {
   expanded?: boolean;
   isDraft?: boolean;
   size?: number; // computed bubble width
+  minimized?: boolean; // whether node is minimized to a dot
+  dotColor?: string; // color of the minimized dot
 };
 
 export type DashboardParams = {

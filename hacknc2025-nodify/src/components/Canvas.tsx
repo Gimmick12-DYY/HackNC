@@ -96,6 +96,37 @@ export default function Canvas({ params }: Props) {
     if (draftId === id) setDraftId(null);
   };
 
+  const onDelete = (id: string) => {
+    setNodes((prev) => {
+      const updated = { ...prev };
+      delete updated[id];
+      return updated;
+    });
+    // Also remove any edges connected to this node
+    setEdges((prev) => prev.filter(([parent, child]) => parent !== id && child !== id));
+    // Clear selection if this node was selected
+    if (selectedId === id) setSelectedId(null);
+    if (draftId === id) setDraftId(null);
+  };
+
+  const onMinimize = (id: string) => {
+    const colors = ['#3b82f6', '#eab308', '#22c55e', '#ef4444', '#8b5cf6', '#f97316', '#06b6d4', '#84cc16'];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    
+    setNodes((prev) => {
+      const node = prev[id];
+      if (!node) return prev;
+      return { 
+        ...prev, 
+        [id]: { 
+          ...node, 
+          minimized: true, 
+          dotColor: randomColor 
+        } 
+      };
+    });
+  };
+
   // Handle window resize and constrain existing nodes
   useEffect(() => {
     const updateCanvasSize = () => {
@@ -244,6 +275,8 @@ export default function Canvas({ params }: Props) {
           onText={onText}
           onGenerate={onGenerate}
           onConfirm={onConfirm}
+          onDelete={onDelete}
+          onMinimize={onMinimize}
           highlight={selectedId === n.id}
           readOnly={!!n.parentId}
         />
