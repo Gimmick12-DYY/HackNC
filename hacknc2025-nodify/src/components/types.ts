@@ -14,6 +14,6 @@ export type NodeItem = {
 
 export type DashboardParams = {
   nodeCount: number; // N
-  phraseLength: number; // approximate characters per phrase
+  phraseLength: number; // approximate phrases per phrase
   temperature: number; // 0-2
 };
