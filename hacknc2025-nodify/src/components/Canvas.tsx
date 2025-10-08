@@ -8,6 +8,7 @@ import { DashboardParams, NodeItem } from "./types";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
+import { Button, TextField } from "@mui/material";
 
 type Props = {
   params: DashboardParams;
@@ -15,12 +16,48 @@ type Props = {
 
 type NodeMap = Record<string, NodeItem>;
 
+type InputOverlayState = {
+  open: boolean;
+  mode: "create-root" | "edit-node";
+  position: { x: number; y: number } | null;
+  targetNodeId: string | null;
+};
+
+type PreviewPlaceholder = {
+  id: string;
+  x: number;
+  y: number;
+  angle: number;
+  size: number;
+};
+
+type NodePreviewState = {
+  parentId: string | null;
+  placeholders: PreviewPlaceholder[];
+  anchor: { x: number; y: number } | null;
+  holdStartClient: { x: number; y: number } | null;
+  pointerClient: { x: number; y: number } | null;
+};
+
+const normalizeAngle = (angle: number) => {
+  const twoPi = Math.PI * 2;
+  let normalized = angle % twoPi;
+  if (normalized > Math.PI) normalized -= twoPi;
+  if (normalized < -Math.PI) normalized += twoPi;
+  return normalized;
+};
+
+const HOLD_DURATION_MS = 500;
+const ROOT_HOLD_MOVE_THRESHOLD = 18;
+const NODE_HOLD_MOVE_THRESHOLD = 24;
+const PREVIEW_PLACEHOLDER_SIZE = 150;
+const SWIPE_TRIGGER_DISTANCE = 70;
+const SWIPE_ANGLE_TOLERANCE = Math.PI / 5;
+
 export default function Canvas({ params }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [contextMenu, setContextMenu] = useState<{ 
     x: number; 
     y: number; 
@@ -30,6 +67,20 @@ export default function Canvas({ params }: Props) {
     nodeId?: string 
   } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [inputOverlay, setInputOverlay] = useState<InputOverlayState>({
+    open: false,
+    mode: "create-root",
+    position: null,
+    targetNodeId: null,
+  });
+  const [inputOverlayValue, setInputOverlayValue] = useState("");
+  const [previewState, setPreviewState] = useState<NodePreviewState>({
+    parentId: null,
+    placeholders: [],
+    anchor: null,
+    holdStartClient: null,
+    pointerClient: null,
+  });
   
   // 视口状态：缩放和平移
   const [scale, setScale] = useState(1);
@@ -41,6 +92,12 @@ export default function Canvas({ params }: Props) {
   const draggingNodesRef = useRef(new Set<string>());
   const canvasRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
+  const rootHoldTimerRef = useRef<number | null>(null);
+  const rootHoldActiveRef = useRef(false);
+  const rootHoldStartRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const rootHoldWorldRef = useRef<{ x: number; y: number } | null>(null);
+  const nodeHoldTimerRef = useRef<number | null>(null);
+  const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
 
   const nextId = () => `n_${idRef.current++}`;
 
@@ -51,7 +108,7 @@ export default function Canvas({ params }: Props) {
   };
 
   // 屏幕坐标转换为canvas坐标
-  const screenToCanvas = (screenX: number, screenY: number) => {
+  const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return { x: screenX, y: screenY };
     
@@ -63,14 +120,61 @@ export default function Canvas({ params }: Props) {
     const worldY = (canvasY - offsetY) / scale;
     
     return { x: worldX, y: worldY };
-  };
+  }, [offsetX, offsetY, scale]);
 
   // canvas坐标转换为屏幕坐标
-  const canvasToScreen = (canvasX: number, canvasY: number) => {
-    return {
-      x: canvasX * scale + offsetX,
-      y: canvasY * scale + offsetY
-    };
+  const cancelRootHold = useCallback(() => {
+    if (rootHoldTimerRef.current !== null) {
+      window.clearTimeout(rootHoldTimerRef.current);
+      rootHoldTimerRef.current = null;
+    }
+    rootHoldActiveRef.current = false;
+    rootHoldStartRef.current = null;
+    rootHoldWorldRef.current = null;
+  }, []);
+
+  const closeInputOverlay = useCallback(() => {
+    cancelRootHold();
+    setInputOverlay({
+      open: false,
+      mode: "create-root",
+      position: null,
+      targetNodeId: null,
+    });
+    setInputOverlayValue("");
+  }, [cancelRootHold]);
+
+  const clearPreview = useCallback(() => {
+    setPreviewState({
+      parentId: null,
+      placeholders: [],
+      anchor: null,
+      holdStartClient: null,
+      pointerClient: null,
+    });
+  }, []);
+
+  const cancelNodeHold = useCallback(() => {
+    if (nodeHoldTimerRef.current !== null) {
+      window.clearTimeout(nodeHoldTimerRef.current);
+      nodeHoldTimerRef.current = null;
+    }
+    nodeHoldInfoRef.current = null;
+  }, []);
+
+  const handleInputOverlaySubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!inputOverlay.open) return;
+    const value = inputOverlayValue.trim();
+    if (!value) return;
+
+    if (inputOverlay.mode === "create-root" && inputOverlay.position) {
+      const diameter = computeSize(value);
+      const x = (inputOverlay.position.x ?? 0) - diameter / 2;
+      const y = (inputOverlay.position.y ?? 0) - diameter / 2;
+      addNodeAt(x, y, null, value);
+      closeInputOverlay();
+    }
   };
 
 
@@ -88,44 +192,6 @@ export default function Canvas({ params }: Props) {
     return distance < minDistance;
   };
 
-  // Find a non-colliding position for a node
-  const findNonCollidingPosition = (targetX: number, targetY: number, nodeId: string, nodeSize: number = 160) => {
-    let x = targetX;
-    let y = targetY;
-    let attempts = 0;
-    const maxAttempts = 50;
-    
-    while (attempts < maxAttempts) {
-      const testNode = { x, y, size: nodeSize };
-      let hasCollision = false;
-      
-      // Check against all other nodes
-      for (const otherNode of Object.values(nodes)) {
-        if (otherNode.id === nodeId || otherNode.minimized) continue;
-        
-        if (checkCollision(testNode, otherNode)) {
-          hasCollision = true;
-          break;
-        }
-      }
-      
-      if (!hasCollision) {
-        // No boundary constraints - return position as is
-        return { x, y };
-      }
-      
-      // Try a new position in a spiral pattern
-      const angle = (attempts * 0.5) % (2 * Math.PI);
-      const radius = 20 + attempts * 5;
-      x = targetX + Math.cos(angle) * radius;
-      y = targetY + Math.sin(angle) * radius;
-      attempts++;
-    }
-    
-    // If no non-colliding position found, return target position without constraints
-    return { x: targetX, y: targetY };
-  };
-
   const addNodeAt = (x: number, y: number, parentId?: string | null, text = "") => {
     const id = nextId();
     
@@ -140,13 +206,11 @@ export default function Canvas({ params }: Props) {
       text,
       parentId: parentId ?? null,
       children: [],
-      isDraft: !parentId, // top-level clicks start as draft; children are confirmed
       size: computeSize(text),
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
     if (parentId) setEdges((e) => [...e, [parentId, id]]);
     setSelectedId(id);
-    if (!parentId) setDraftId(id);
     return id;
   };
 
@@ -183,10 +247,44 @@ export default function Canvas({ params }: Props) {
       setPanStart({ x: e.clientX - offsetX, y: e.clientY - offsetY });
       // 阻止浏览器默认的中键滚动行为
       document.body.style.overflow = 'hidden';
+      return;
+    }
+
+    if (e.button === 0) {
+      const hasNodes = Object.keys(nodes).length > 0;
+      if (!hasNodes && !inputOverlay.open) {
+        if (rootHoldTimerRef.current !== null) {
+          window.clearTimeout(rootHoldTimerRef.current);
+        }
+        rootHoldActiveRef.current = true;
+        rootHoldStartRef.current = { clientX: e.clientX, clientY: e.clientY };
+        rootHoldWorldRef.current = screenToCanvas(e.clientX, e.clientY);
+        rootHoldTimerRef.current = window.setTimeout(() => {
+          rootHoldTimerRef.current = null;
+          if (!rootHoldActiveRef.current) return;
+          const position = rootHoldWorldRef.current ?? screenToCanvas(e.clientX, e.clientY);
+          setInputOverlay({
+            open: true,
+            mode: "create-root",
+            position,
+            targetNodeId: null,
+          });
+          setInputOverlayValue("");
+          rootHoldActiveRef.current = false;
+        }, HOLD_DURATION_MS);
+      }
     }
   };
 
   const onCanvasMouseMove = (e: React.MouseEvent) => {
+    if (rootHoldActiveRef.current && rootHoldStartRef.current) {
+      const dx = e.clientX - rootHoldStartRef.current.clientX;
+      const dy = e.clientY - rootHoldStartRef.current.clientY;
+      if (Math.hypot(dx, dy) > ROOT_HOLD_MOVE_THRESHOLD) {
+        cancelRootHold();
+      }
+    }
+
     if (isPanning && panStart) {
       setOffsetX(e.clientX - panStart.x);
       setOffsetY(e.clientY - panStart.y);
@@ -198,6 +296,9 @@ export default function Canvas({ params }: Props) {
       setIsPanning(false);
       setPanStart(null);
       document.body.style.overflow = '';
+    }
+    if (e.button === 0) {
+      cancelRootHold();
     }
   };
 
@@ -281,7 +382,6 @@ export default function Canvas({ params }: Props) {
       text: "",
       parentId: null,
       children: [],
-      isDraft: false, // Directly confirmed, not a draft
       size: nodeSize,
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
@@ -294,7 +394,7 @@ export default function Canvas({ params }: Props) {
   const animationFrameRef = useRef<number | null>(null);
 
   // 重置相机到初始位置
-  const onResetCamera = () => {
+  const onResetCamera = useCallback(() => {
     // 取消之前可能存在的动画
     if (animationFrameRef.current !== null) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -333,7 +433,7 @@ export default function Canvas({ params }: Props) {
     
     animationFrameRef.current = requestAnimationFrame(animate);
     setContextMenu(null); // Hide menu after action
-  };
+  }, [scale, offsetX, offsetY]);
 
   const executingActionsRef = useRef(new Set<string>());
   
@@ -405,6 +505,9 @@ export default function Canvas({ params }: Props) {
   }, []);
 
   const onMove = useCallback((id: string, x: number, y: number) => {
+    if (previewState.parentId === id) {
+      return;
+    }
     // Track dragging nodes for smooth line animations (only add if not already dragging this node)
     if (!draggingNodesRef.current.has(id)) {
       if (draggingNodesRef.current.size === 0) {
@@ -426,9 +529,16 @@ export default function Canvas({ params }: Props) {
         [id]: { ...node, x, y }
       };
     });
-  }, []);
+  }, [previewState.parentId]);
 
   const onMoveEnd = useCallback((id: string, x: number, y: number, originalX?: number, originalY?: number) => {
+    if (previewState.parentId === id) {
+      draggingNodesRef.current.delete(id);
+      if (draggingNodesRef.current.size === 0) {
+        setIsDragging(false);
+      }
+      return;
+    }
     setNodes((currentNodes) => {
       const node = currentNodes[id];
       if (!node) return currentNodes;
@@ -536,19 +646,7 @@ export default function Canvas({ params }: Props) {
     if (draggingNodesRef.current.size === 0) {
       setIsDragging(false);
     }
-  }, []);
-
-  const onText = useCallback((id: string, text: string) => {
-    setNodes((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], text, size: computeSize(text) },
-    }));
-  }, []);
-
-  const onConfirm = useCallback((id: string) => {
-    setNodes((prev) => ({ ...prev, [id]: { ...prev[id], isDraft: false } }));
-    setDraftId((current) => current === id ? null : current);
-  }, []);
+  }, [previewState.parentId]);
 
   const onDelete = useCallback((id: string) => {
     setNodes((prev) => {
@@ -560,7 +658,16 @@ export default function Canvas({ params }: Props) {
     setEdges((prev) => prev.filter(([parent, child]) => parent !== id && child !== id));
     // Clear selection if this node was selected
     setSelectedId((current) => current === id ? null : current);
-    setDraftId((current) => current === id ? null : current);
+    setPreviewState((prev) => {
+      if (prev.parentId !== id) return prev;
+      return {
+        parentId: null,
+        placeholders: [],
+        anchor: null,
+        holdStartClient: null,
+        pointerClient: null,
+      };
+    });
   }, []);
 
   const onMinimize = useCallback((id: string) => {
@@ -595,102 +702,8 @@ export default function Canvas({ params }: Props) {
     });
   }, []);
 
-  // Handle window resize and constrain existing nodes
-  useEffect(() => {
-    const updateCanvasSize = () => {
-      if (canvasRef.current) {
-        const rect = canvasRef.current.getBoundingClientRect();
-        setCanvasSize({ width: rect.width, height: rect.height });
-      }
-    };
-
-    // Initial size - use setTimeout to ensure DOM is ready
-    setTimeout(updateCanvasSize, 0);
-
-    // Listen for resize
-    window.addEventListener('resize', updateCanvasSize);
-    return () => window.removeEventListener('resize', updateCanvasSize);
-  }, []);
-
-
-
-  // Close context menu when clicking outside or pressing escape
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (contextMenu) {
-        setContextMenu(null);
-      }
-    };
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && contextMenu) {
-        setContextMenu(null);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl/Cmd + 0 重置相机
-      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
-        e.preventDefault();
-        onResetCamera();
-      }
-    };
-
-    if (contextMenu) {
-      document.addEventListener('click', handleClickOutside);
-      document.addEventListener('keydown', handleEscape);
-    }
-
-    // 添加全局键盘快捷键监听
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('click', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [contextMenu]);
-
-  // 全局鼠标事件处理（平移功能）
-  useEffect(() => {
-    const handleGlobalMouseMove = (e: MouseEvent) => {
-      if (isPanning && panStart) {
-        setOffsetX(e.clientX - panStart.x);
-        setOffsetY(e.clientY - panStart.y);
-      }
-    };
-
-    const handleGlobalMouseUp = (e: MouseEvent) => {
-      if (isPanning) {
-        setIsPanning(false);
-        setPanStart(null);
-        document.body.style.overflow = '';
-      }
-    };
-
-    if (isPanning) {
-      document.addEventListener('mousemove', handleGlobalMouseMove);
-      document.addEventListener('mouseup', handleGlobalMouseUp);
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleGlobalMouseMove);
-      document.removeEventListener('mouseup', handleGlobalMouseUp);
-    };
-  }, [isPanning, panStart]);
-
-  // 组件卸载时清理动画帧
-  useEffect(() => {
-    return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-    };
-  }, []);
-
   // 重写的智能散布算法
-  const arrangeAroundSmart = (centerX: number, centerY: number, childCount: number, parentId: string) => {
+  const arrangeAroundSmart = useCallback((centerX: number, centerY: number, childCount: number, parentId: string) => {
     const positions: { x: number; y: number }[] = [];
     
     // 如果没有子节点，直接返回
@@ -775,11 +788,9 @@ export default function Canvas({ params }: Props) {
     }
     
     return positions;
-  };
+  }, [nodes]);
 
-  // Add ref to track which nodes are currently generating to prevent double execution
-  const generatingNodesRef = useRef(new Set<string>());
-  
+
   const onGenerate = useCallback(
     async (id: string) => {
       console.log('onGenerate function called with id:', id);
@@ -863,7 +874,6 @@ export default function Canvas({ params }: Props) {
               y: finalY,
               parentId: id,
               children: [],
-              isDraft: false,
               size: childSize,
             };
             childIds.push(childId);
@@ -882,7 +892,257 @@ export default function Canvas({ params }: Props) {
         generatingNodesRef.current.delete(id);
       }
     },
-    [params.nodeCount, params.phraseLength, params.temperature]
+    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart]
+  );
+
+  const generatingNodesRef = useRef(new Set<string>());
+
+  const commitPreview = useCallback(
+    (nodeId: string) => {
+      if (generatingNodesRef.current.has(nodeId)) {
+        return;
+      }
+      clearPreview();
+      cancelNodeHold();
+      onGenerate(nodeId);
+    },
+    [clearPreview, cancelNodeHold, onGenerate]
+  );
+
+  useEffect(() => {
+    if (!inputOverlay.open) return;
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeInputOverlay();
+      }
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, [inputOverlay.open, closeInputOverlay]);
+
+  useEffect(() => {
+    if (!previewState.parentId) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitPreview(previewState.parentId);
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelNodeHold();
+        clearPreview();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [previewState.parentId, commitPreview, cancelNodeHold, clearPreview]);
+
+
+
+  // Close context menu when clicking outside or pressing escape
+  useEffect(() => {
+    const handleClickOutside = () => {
+      if (contextMenu) {
+        setContextMenu(null);
+      }
+    };
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && contextMenu) {
+        setContextMenu(null);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + 0 重置相机
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault();
+        onResetCamera();
+      }
+    };
+
+    if (contextMenu) {
+      document.addEventListener('click', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+    }
+
+    // 添加全局键盘快捷键监听
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [contextMenu, onResetCamera]);
+
+  useEffect(() => cancelNodeHold, [cancelNodeHold]);
+
+  // 全局鼠标事件处理（平移功能）
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (isPanning && panStart) {
+        setOffsetX(e.clientX - panStart.x);
+        setOffsetY(e.clientY - panStart.y);
+      }
+    };
+
+    const handleGlobalMouseUp = () => {
+      if (isPanning) {
+        setIsPanning(false);
+        setPanStart(null);
+        document.body.style.overflow = '';
+      }
+      cancelRootHold();
+    };
+
+    if (isPanning) {
+      document.addEventListener('mousemove', handleGlobalMouseMove);
+      document.addEventListener('mouseup', handleGlobalMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [isPanning, panStart, cancelRootHold]);
+
+  // 组件卸载时清理动画帧
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, []);
+
+  
+  // Add ref to track which nodes are currently generating to prevent double execution
+  const openPreviewForNode = useCallback(
+    (nodeId: string, holdStart: { x: number; y: number } | null) => {
+      if (params.nodeCount <= 0) {
+        return;
+      }
+      const parentNode = nodes[nodeId];
+      if (!parentNode || parentNode.minimized) {
+        return;
+      }
+
+      const parentSize = parentNode.size ?? 160;
+      const anchorX = parentNode.x + parentSize / 2;
+      const anchorY = parentNode.y + parentSize / 2;
+
+      const targetPositions = arrangeAroundSmart(anchorX, anchorY, params.nodeCount, nodeId);
+      if (!targetPositions.length) {
+        setPreviewState({
+          parentId: nodeId,
+          placeholders: [],
+          anchor: { x: anchorX, y: anchorY },
+          holdStartClient: holdStart,
+          pointerClient: holdStart,
+        });
+        return;
+      }
+
+      const placeholders = targetPositions.map((center, index) => {
+        const size = Math.max(120, Math.min(PREVIEW_PLACEHOLDER_SIZE, parentSize + 10));
+        return {
+          id: `${nodeId}-preview-${index}`,
+          x: center.x - size / 2,
+          y: center.y - size / 2,
+          angle: Math.atan2(center.y - anchorY, center.x - anchorX),
+          size,
+        } satisfies PreviewPlaceholder;
+      });
+
+      setPreviewState({
+        parentId: nodeId,
+        placeholders,
+        anchor: { x: anchorX, y: anchorY },
+        holdStartClient: holdStart,
+        pointerClient: holdStart,
+      });
+      setSelectedId(nodeId);
+    },
+    [nodes, params.nodeCount, arrangeAroundSmart]
+  );
+
+  const handleNodeHoldStart = useCallback(
+    ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
+      if (inputOverlay.open) return;
+      cancelNodeHold();
+      clearPreview();
+      const startCanvas = screenToCanvas(clientX, clientY);
+      nodeHoldInfoRef.current = {
+        nodeId,
+        startClient: { x: clientX, y: clientY },
+        startCanvas,
+      };
+      nodeHoldTimerRef.current = window.setTimeout(() => {
+        nodeHoldTimerRef.current = null;
+        const info = nodeHoldInfoRef.current;
+        if (!info || info.nodeId !== nodeId) return;
+        openPreviewForNode(nodeId, info.startClient);
+      }, HOLD_DURATION_MS);
+    },
+    [cancelNodeHold, clearPreview, openPreviewForNode, inputOverlay.open, screenToCanvas]
+  );
+
+  const handleNodeHoldMove = ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
+    const holdInfo = nodeHoldInfoRef.current;
+    if (holdInfo && holdInfo.nodeId === nodeId && nodeHoldTimerRef.current !== null) {
+      const dx = clientX - holdInfo.startClient.x;
+      const dy = clientY - holdInfo.startClient.y;
+      if (Math.hypot(dx, dy) > NODE_HOLD_MOVE_THRESHOLD) {
+        cancelNodeHold();
+      }
+    }
+
+    setPreviewState((prev) => {
+      if (prev.parentId !== nodeId) return prev;
+      if (prev.pointerClient && prev.pointerClient.x === clientX && prev.pointerClient.y === clientY) {
+        return prev;
+      }
+      return {
+        ...prev,
+        pointerClient: { x: clientX, y: clientY },
+      };
+    });
+  };
+
+  
+  const handleNodeHoldEnd = useCallback(
+    ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
+      if (previewState.parentId === nodeId && previewState.anchor) {
+        const releaseCanvas = screenToCanvas(clientX, clientY);
+        const dx = releaseCanvas.x - previewState.anchor.x;
+        const dy = releaseCanvas.y - previewState.anchor.y;
+        const distance = Math.hypot(dx, dy);
+
+        if (distance >= SWIPE_TRIGGER_DISTANCE) {
+          const swipeAngle = Math.atan2(dy, dx);
+          const matched = previewState.placeholders.some((placeholder) => {
+            const diff = Math.abs(normalizeAngle(swipeAngle - placeholder.angle));
+            return diff <= SWIPE_ANGLE_TOLERANCE;
+          });
+
+          if (matched) {
+            commitPreview(nodeId);
+            return;
+          }
+        }
+      }
+
+      if (nodeHoldInfoRef.current?.nodeId === nodeId) {
+        cancelNodeHold();
+      }
+      if (previewState.parentId === nodeId) {
+        clearPreview();
+      }
+    },
+    [previewState, screenToCanvas, commitPreview, cancelNodeHold, clearPreview]
   );
 
   const lines = useMemo(() => {
@@ -912,15 +1172,14 @@ export default function Canvas({ params }: Props) {
   const gridPattern = useMemo(() => {
     // 计算适应缩放的网格大小
     let actualGridSize = gridSize;
-    let currentScale = scale;
     
     // 当缩放过小时，使用更大的网格
-    while (actualGridSize * currentScale < 20 && actualGridSize < 200) {
+    while (actualGridSize * scale < 20 && actualGridSize < 200) {
       actualGridSize *= 2;
     }
     
     // 当缩放过大时，使用更小的网格
-    while (actualGridSize * currentScale > 200 && actualGridSize > 12.5) {
+    while (actualGridSize * scale > 200 && actualGridSize > 12.5) {
       actualGridSize /= 2;
     }
     
@@ -1032,7 +1291,45 @@ export default function Canvas({ params }: Props) {
               }}
             />
           ))}
+          {previewState.anchor &&
+            previewState.placeholders.map((placeholder) => {
+              const targetX = placeholder.x + placeholder.size / 2;
+              const targetY = placeholder.y + placeholder.size / 2;
+              return (
+                <motion.line
+                  key={`${placeholder.id}-preview-line`}
+                  x1={previewState.anchor!.x}
+                  y1={previewState.anchor!.y}
+                  x2={targetX}
+                  y2={targetY}
+                  stroke="#94a3b8"
+                  strokeWidth={1.2}
+                  strokeDasharray="6 6"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.6 }}
+                  style={{ vectorEffect: 'non-scaling-stroke' }}
+                />
+              );
+            })}
         </svg>
+
+        {previewState.placeholders.map((placeholder) => (
+          <motion.div
+            key={placeholder.id}
+            className="absolute pointer-events-none rounded-full border border-dashed border-slate-400/60 bg-white/20 backdrop-blur-md flex items-center justify-center text-[11px] uppercase tracking-wider text-slate-500"
+            style={{
+              left: placeholder.x,
+              top: placeholder.y,
+              width: placeholder.size,
+              height: placeholder.size,
+            }}
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ type: "spring", stiffness: 180, damping: 20, mass: 0.7 }}
+          >
+            <span className="opacity-70">Preview</span>
+          </motion.div>
+        ))}
 
         {Object.values(nodes).map((n) => (
           <NodeCard
@@ -1040,19 +1337,20 @@ export default function Canvas({ params }: Props) {
             node={n}
             onMove={onMove}
             onMoveEnd={onMoveEnd}
-            onText={onText}
-            onGenerate={onGenerate}
-            onConfirm={onConfirm}
-            onDelete={onDelete}
             onMinimize={onMinimize}
             onContextMenu={onNodeContextMenu}
             highlight={selectedId === n.id}
-            readOnly={!!n.parentId}
             screenToCanvas={screenToCanvas}
-            canvasToScreen={canvasToScreen}
+            onHoldStart={handleNodeHoldStart}
+            onHoldMove={handleNodeHoldMove}
+            onHoldEnd={handleNodeHoldEnd}
           />
         ))}
       </div>
+
+      {previewState.parentId && (
+        <div className="pointer-events-none absolute inset-0 bg-slate-950/12 transition-opacity duration-150" />
+      )}
 
       {/* Context Menu - Render in Portal for consistent positioning */}
       {contextMenu && typeof document !== 'undefined' && createPortal(
@@ -1110,8 +1408,48 @@ export default function Canvas({ params }: Props) {
         document.body
       )}
 
+      {inputOverlay.open && typeof document !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+            onClick={closeInputOverlay}
+          />
+          <div className="relative z-10 w-full max-w-md px-6">
+            <div className="rounded-2xl bg-white shadow-xl border border-slate-200 p-6">
+              <h2 className="text-lg font-semibold text-slate-900 mb-3">
+                What&apos;s the core idea?
+              </h2>
+              <p className="text-sm text-slate-500 mb-4">
+                Hold anywhere on the canvas to spark your first thought.
+              </p>
+              <form onSubmit={handleInputOverlaySubmit} className="space-y-4">
+                <TextField
+                  autoFocus
+                  multiline
+                  minRows={2}
+                  label="Idea"
+                  placeholder="Describe the concept you want to explore…"
+                  value={inputOverlayValue}
+                  onChange={(event) => setInputOverlayValue(event.target.value)}
+                  fullWidth
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <Button variant="text" onClick={closeInputOverlay}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="contained" disableElevation>
+                    Create Node
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-slate-500 text-sm bg-white/70 backdrop-blur rounded-full px-3 py-1 shadow select-none" style={{ caretColor: 'transparent' }}>
-        Scroll to zoom • Middle-click drag to pan • Right-click to add node or reset camera • Ctrl+0 to reset view • Drag to reposition
+        Hold canvas 0.5s to seed an idea • Hold + swipe a node or press Enter to branch • Scroll to zoom • Middle-click drag to pan • Right-click for tools
       </div>
     </div>
   );

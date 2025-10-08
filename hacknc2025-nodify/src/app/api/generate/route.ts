@@ -11,7 +11,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const sys = `You are a concise brainstorming assistant. Generate only a JSON array of ${count} short, evocative phrases (~${phraseLength} chars each), no extra text.`;
+    const sys = `You are a concise brainstorming assistant. 
+          Generate only a JSON array of ${count} short, 
+          evocative phrases of around length ${phraseLength}, 
+          no extra text.`;
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${apiKey}`,
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: process.env.OPENROUTER_MODEL || "openai/gpt-3.5-turbo",
+        model: process.env.OPENROUTER_MODEL,
         temperature: typeof temperature === "number" ? temperature : 0.7,
         messages: [
           { role: "system", content: sys },

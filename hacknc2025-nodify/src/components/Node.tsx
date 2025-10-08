@@ -1,43 +1,52 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { NodeItem } from "./types";
-import { TextField } from "@mui/material";
 import { motion } from "framer-motion";
+import { NodeItem } from "./types";
 
 type Props = {
   node: NodeItem;
   onMove: (id: string, x: number, y: number) => void;
   onMoveEnd: (id: string, x: number, y: number, originalX?: number, originalY?: number) => void;
-  onText: (id: string, text: string) => void;
-  onGenerate: (id: string) => void;
-  onConfirm: (id: string) => void;
-  onDelete?: (id: string) => void;
   onMinimize?: (id: string) => void;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
   highlight?: boolean;
-  readOnly?: boolean; // for child nodes
   screenToCanvas?: (screenX: number, screenY: number) => { x: number; y: number };
-  canvasToScreen?: (canvasX: number, canvasY: number) => { x: number; y: number };
+  onHoldStart?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
+  onHoldMove?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
+  onHoldEnd?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
 };
 
-export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, onConfirm, onDelete, onMinimize, onContextMenu, highlight, readOnly, screenToCanvas, canvasToScreen }: Props) {
+export default function NodeCard({
+  node,
+  onMove,
+  onMoveEnd,
+  onMinimize,
+  onContextMenu,
+  highlight,
+  screenToCanvas,
+  onHoldStart,
+  onHoldMove,
+  onHoldEnd,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const [dragStartPosition, setDragStartPosition] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
-  const lastGenerateTimeRef = useRef(0);
   
   // Use refs to store callback functions to avoid dependency issues
   const onMoveRef = useRef(onMove);
   const onMoveEndRef = useRef(onMoveEnd);
+  const onHoldStartRef = useRef(onHoldStart);
+  const onHoldMoveRef = useRef(onHoldMove);
+  const onHoldEndRef = useRef(onHoldEnd);
   
   // Update refs when callbacks change
   onMoveRef.current = onMove;
   onMoveEndRef.current = onMoveEnd;
+  onHoldStartRef.current = onHoldStart;
+  onHoldMoveRef.current = onHoldMove;
+  onHoldEndRef.current = onHoldEnd;
 
   // Use ref to store current offset to avoid dependency issues
   const offsetRef = useRef(offset);
@@ -59,6 +68,7 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
         // Fallback to old behavior if no conversion function provided
         onMoveRef.current(nodeId, e.clientX - offsetRef.current.x, e.clientY - offsetRef.current.y);
       }
+      onHoldMoveRef.current?.({ nodeId, clientX: e.clientX, clientY: e.clientY });
     };
     
     const handleMouseUp = (e: MouseEvent) => {
@@ -74,6 +84,7 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
         finalY = e.clientY - offsetRef.current.y;
       }
       onMoveEndRef.current(nodeId, finalX, finalY, currentDragStartPosition.x, currentDragStartPosition.y);
+      onHoldEndRef.current?.({ nodeId, clientX: e.clientX, clientY: e.clientY });
       setDragging(false);
     };
     
@@ -84,7 +95,7 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [dragging, node.id]); // 移除offset依赖
+  }, [dragging, node.id, screenToCanvas]);
 
   const startDrag = (e: React.MouseEvent) => {
     // Don't start drag if clicking on TextField or input elements
@@ -100,7 +111,6 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
     // This ensures we get the real position even if node is mid-animation
     const currentPosition = { x: node.x, y: node.y };
     dragStartPositionRef.current = currentPosition;
-    setDragStartPosition(currentPosition);
     
     setDragging(true);
     // Calculate offset from mouse position to node's current position
@@ -111,32 +121,12 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
       // Fallback to old behavior if no conversion function provided
       setOffset({ x: e.clientX - node.x, y: e.clientY - node.y });
     }
+    onHoldStartRef.current?.({ nodeId: node.id, clientX: e.clientX, clientY: e.clientY });
   };
 
   const diameter = node.minimized 
     ? 24 // Larger dot size to be more visible
     : Math.max(120, Math.min(node.size ?? 160, 420));
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key.toLowerCase() === "enter") {
-      // Prevent double execution by checking timing
-      const now = Date.now();
-      if (now - lastGenerateTimeRef.current < 1000) {
-        return; // Prevent execution if called within 1 second
-      }
-      lastGenerateTimeRef.current = now;
-      
-      onConfirm(node.id);
-      onGenerate(node.id);
-    }
-  };
-
-  const handleDelete = () => {
-    setIsDeleting(true);
-    // Wait for animation to complete before actually deleting
-    setTimeout(() => {
-      onDelete?.(node.id);
-    }, 500); // Match animation duration
-  };
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -155,33 +145,33 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
         position: 'absolute',
         left: 0,
         top: 0,
+        zIndex: highlight ? 30 : 10,
       }}
       initial={{ scale: 0.6, opacity: 0.5, x: node.x, y: node.y }}
-      animate={{ 
-        scale: isDeleting ? 0 : 1, 
-        opacity: isDeleting ? 0 : 1,
+      animate={{
+        scale: 1,
+        opacity: 1,
         width: diameter,
         height: diameter,
-        rotate: isDeleting ? 180 : 0,
+        rotate: 0,
         x: node.x,
-        y: node.y
+        y: node.y,
       }}
-      transition={{ 
-        type: "spring", 
-        stiffness: 300, 
-        damping: 25, 
+      transition={{
+        type: "spring",
+        stiffness: 300,
+        damping: 25,
         mass: 0.8,
-        duration: isDeleting ? 0.5 : 0.4,
-        // Disable position animation during drag for immediate response
+        duration: 0.4,
         x: dragging ? { duration: 0 } : undefined,
-        y: dragging ? { duration: 0 } : undefined
+        y: dragging ? { duration: 0 } : undefined,
       }}
     >
       <motion.div
         className={`rounded-full backdrop-blur shadow-md border flex items-center justify-center text-center ${
           node.minimized 
             ? 'border-transparent' 
-            : 'bg-[#fffaf3] border-[#e6dccb] px-4 py-4'
+            : `bg-[#fffaf3] border-[#e6dccb] px-4 py-4 ${highlight ? 'ring-4 ring-sky-200/60 shadow-xl' : ''}`
         }`}
         onMouseDown={startDrag}
         onContextMenu={handleContextMenu}
@@ -216,46 +206,15 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
             opacity: node.minimized ? 0 : 1,
             scale: node.minimized ? 0.8 : 1,
           }}
-          transition={{
-            duration: 0.3,
-            ease: "easeInOut"
-          }}
-        >
+        transition={{
+          duration: 0.3,
+          ease: "easeInOut"
+        }}
+      >
           {node.minimized ? null : (
-            readOnly ? (
-              <div className="text-slate-800 text-sm whitespace-pre-wrap break-words leading-snug text-center">
-                {node.text}
-              </div>
-            ) : (
-              <TextField
-                variant="standard"
-                placeholder="Type an idea…"
-                value={node.text}
-                onChange={(e) => onText(node.id, e.target.value)}
-                onKeyDown={onKey}
-                onMouseDown={(e) => e.stopPropagation()}
-                onMouseUp={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                InputProps={{ 
-                  disableUnderline: false,
-                  style: { textAlign: 'center' }
-                }}
-                sx={{
-                  '& .MuiInputBase-input': {
-                    textAlign: 'center',
-                    fontSize: '14px',
-                    lineHeight: '1.4',
-                    cursor: 'text',
-                  },
-                  '& .MuiInputBase-input::placeholder': {
-                    textAlign: 'center',
-                    opacity: 0.7,
-                  }
-                }}
-                multiline
-                fullWidth
-              />
-            )
+            <div className="text-slate-800 text-sm whitespace-pre-wrap break-words leading-snug text-center px-2">
+              {node.text || <span className="opacity-50">Awaiting content…</span>}
+            </div>
           )}
         </motion.div>
       </motion.div>
