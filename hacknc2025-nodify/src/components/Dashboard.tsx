@@ -11,9 +11,10 @@ type Props = {
   onToggle: () => void;
   params: DashboardParams;
   onChange: (p: DashboardParams) => void;
+  onHover?: (hovered: boolean) => void;
 };
 
-export default function Dashboard({ open, onToggle, params, onChange }: Props) {
+export default function Dashboard({ open, onToggle, params, onChange, onHover }: Props) {
   return (
     <>
       {/* Floating Dashboard Button - Expands on Hover */}
@@ -32,10 +33,12 @@ export default function Dashboard({ open, onToggle, params, onChange }: Props) {
         onMouseEnter={(e) => {
           e.currentTarget.style.width = '140px';
           e.currentTarget.style.paddingRight = '20px';
+          onHover?.(true);
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.width = '56px';
           e.currentTarget.style.paddingRight = '16px';
+          onHover?.(false);
         }}
         aria-label={open ? "Close Dashboard" : "Open Dashboard"}
       >
