@@ -12,6 +12,7 @@ export type NodeItem = {
   size?: number; // computed bubble width
   minimized?: boolean; // whether node is minimized to a dot
   dotColor?: string; // color of the minimized dot
+  isBouncing?: boolean; // for collision bounce animation
 };
 
 export type DashboardParams = {
