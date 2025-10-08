@@ -926,7 +926,9 @@ export default function Canvas({ params }: Props) {
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        commitPreview(previewState.parentId);
+        if (previewState.parentId) {
+          commitPreview(previewState.parentId);
+        }
       }
       if (event.key === "Escape") {
         event.preventDefault();
