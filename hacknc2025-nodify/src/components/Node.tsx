@@ -17,9 +17,11 @@ type Props = {
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
   highlight?: boolean;
   readOnly?: boolean; // for child nodes
+  screenToCanvas?: (screenX: number, screenY: number) => { x: number; y: number };
+  canvasToScreen?: (canvasX: number, canvasY: number) => { x: number; y: number };
 };
 
-export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, onConfirm, onDelete, onMinimize, onContextMenu, highlight, readOnly }: Props) {
+export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, onConfirm, onDelete, onMinimize, onContextMenu, highlight, readOnly, screenToCanvas, canvasToScreen }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -28,25 +30,50 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
   const [dragStartPosition, setDragStartPosition] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
   const lastGenerateTimeRef = useRef(0);
+  
+  // Use refs to store callback functions to avoid dependency issues
+  const onMoveRef = useRef(onMove);
+  const onMoveEndRef = useRef(onMoveEnd);
+  
+  // Update refs when callbacks change
+  onMoveRef.current = onMove;
+  onMoveEndRef.current = onMoveEnd;
+
+  // Use ref to store current offset to avoid dependency issues
+  const offsetRef = useRef(offset);
+  offsetRef.current = offset;
 
   useEffect(() => {
     if (!dragging) return;
     
     // Capture current values in closure to avoid stale closure issues
-    const currentOffset = offset;
     const currentDragStartPosition = dragStartPositionRef.current;
     const nodeId = node.id;
     
     const handleMouseMove = (e: MouseEvent) => {
-      // During drag, just update position without collision detection
-      onMove(nodeId, e.clientX - currentOffset.x, e.clientY - currentOffset.y);
+      // Convert screen coordinates to world coordinates
+      if (screenToCanvas) {
+        const worldPos = screenToCanvas(e.clientX, e.clientY);
+        onMoveRef.current(nodeId, worldPos.x - offsetRef.current.x, worldPos.y - offsetRef.current.y);
+      } else {
+        // Fallback to old behavior if no conversion function provided
+        onMoveRef.current(nodeId, e.clientX - offsetRef.current.x, e.clientY - offsetRef.current.y);
+      }
     };
     
     const handleMouseUp = (e: MouseEvent) => {
-      // On drag end, perform collision detection
-      const finalX = e.clientX - currentOffset.x;
-      const finalY = e.clientY - currentOffset.y;
-      onMoveEnd(nodeId, finalX, finalY, currentDragStartPosition.x, currentDragStartPosition.y);
+      // Convert screen coordinates to world coordinates
+      let finalX, finalY;
+      if (screenToCanvas) {
+        const worldPos = screenToCanvas(e.clientX, e.clientY);
+        finalX = worldPos.x - offsetRef.current.x;
+        finalY = worldPos.y - offsetRef.current.y;
+      } else {
+        // Fallback to old behavior if no conversion function provided
+        finalX = e.clientX - offsetRef.current.x;
+        finalY = e.clientY - offsetRef.current.y;
+      }
+      onMoveEndRef.current(nodeId, finalX, finalY, currentDragStartPosition.x, currentDragStartPosition.y);
       setDragging(false);
     };
     
@@ -57,7 +84,7 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [dragging, offset.x, offset.y, node.id]);
+  }, [dragging, node.id]); // 移除offset依赖
 
   const startDrag = (e: React.MouseEvent) => {
     // Don't start drag if clicking on TextField or input elements
@@ -77,7 +104,13 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
     
     setDragging(true);
     // Calculate offset from mouse position to node's current position
-    setOffset({ x: e.clientX - node.x, y: e.clientY - node.y });
+    if (screenToCanvas) {
+      const worldPos = screenToCanvas(e.clientX, e.clientY);
+      setOffset({ x: worldPos.x - node.x, y: worldPos.y - node.y });
+    } else {
+      // Fallback to old behavior if no conversion function provided
+      setOffset({ x: e.clientX - node.x, y: e.clientY - node.y });
+    }
   };
 
   const diameter = node.minimized 
@@ -116,7 +149,8 @@ export default function NodeCard({ node, onMove, onMoveEnd, onText, onGenerate, 
   return (
     <motion.div
       ref={ref}
-      className="select-none"
+      className="select-none node-card"
+      data-node-id={node.id}
       style={{
         position: 'absolute',
         left: 0,
