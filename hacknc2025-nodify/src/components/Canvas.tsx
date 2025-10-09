@@ -20,7 +20,7 @@ type NodeMap = Record<string, NodeItem>;
 
 type InputOverlayState = {
   open: boolean;
-  mode: "create-root" | "edit-node";
+  mode: "create-root";
   position: { x: number; y: number } | null;
   targetNodeId: string | null;
 };
@@ -66,7 +66,10 @@ const SWIPE_ANGLE_TOLERANCE = Math.PI / 5;
 export default function Canvas({ params, onRequestInfo }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 多选：用 Set 存储所有选中节点
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectedIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   const [contextMenu, setContextMenu] = useState<{ 
     x: number; 
     y: number; 
@@ -111,10 +114,16 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const [offsetY, setOffsetY] = useState(0);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number } | null>(null);
+  // 框选矩形（使用屏幕坐标）
+  const [selectionRect, setSelectionRect] = useState<{ active: boolean; start: { x: number; y: number } | null; current: { x: number; y: number } | null }>({ active: false, start: null, current: null });
   
   const draggingNodesRef = useRef(new Set<string>());
   const canvasRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
+  // Drag throttling
+  const dragFrameRef = useRef<number | null>(null);
+  const dragPendingRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const edgesRef = useRef(edges);
   const hasInitializedCameraRef = useRef(false);
   const rootHoldTimerRef = useRef<number | null>(null);
   const rootHoldActiveRef = useRef(false);
@@ -122,6 +131,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const rootHoldWorldRef = useRef<{ x: number; y: number } | null>(null);
   const nodeHoldTimerRef = useRef<number | null>(null);
   const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
+  // 组拖拽：记录起点和各节点原始位置
+  const groupDragStartRef = useRef<{ anchorId: string | null; origin: Map<string, { x: number; y: number }> }>({ anchorId: null, origin: new Map() });
 
   const nextId = () => `n_${idRef.current++}`;
 
@@ -233,7 +244,16 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     }
     const n = nodes[nodeId];
     if (!n) return;
-    setSelectedId(nodeId);
+    // 确保不再有上下文菜单和预览状态干扰
+    setContextMenu(null);
+    setPreviewState({
+      parentId: null,
+      placeholders: [],
+      anchor: null,
+      holdStartClient: null,
+      pointerClient: null,
+    });
+  setSelectedIds(new Set([nodeId]));
     setExpandOverlay({
       open: true,
       nodeId,
@@ -291,7 +311,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
     if (parentId) setEdges((e) => [...e, [parentId, id]]);
-    setSelectedId(id);
+  setSelectedIds(new Set([id]));
     return id;
   };
 
@@ -321,6 +341,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   };
 
   // 鼠标中键平移事件
+  const suppressNextCanvasClickRef = useRef(false);
+
   const onCanvasMouseDown = (e: React.MouseEvent) => {
     if (e.button === 1) { // 中键
       e.preventDefault();
@@ -353,6 +375,15 @@ export default function Canvas({ params, onRequestInfo }: Props) {
           setInputOverlayValue("");
           rootHoldActiveRef.current = false;
         }, HOLD_DURATION_MS);
+      } else {
+        // 在空白区域左键按下开始框选
+        const target = e.target as HTMLElement;
+        if (!target.closest('.node-card')) {
+          setSelectionRect({ active: true, start: { x: e.clientX, y: e.clientY }, current: { x: e.clientX, y: e.clientY } });
+          setContextMenu(null);
+          setSelectedIds(new Set());
+          suppressNextCanvasClickRef.current = true;
+        }
       }
     }
   };
@@ -370,6 +401,9 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       setOffsetX(e.clientX - panStart.x);
       setOffsetY(e.clientY - panStart.y);
     }
+    if (selectionRect.active && selectionRect.start) {
+      setSelectionRect((prev) => ({ ...prev, current: { x: e.clientX, y: e.clientY } }));
+    }
   };
 
   const onCanvasMouseUp = (e: React.MouseEvent) => {
@@ -380,10 +414,41 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     }
     if (e.button === 0) {
       cancelRootHold();
+      if (selectionRect.active && selectionRect.start && selectionRect.current) {
+        const x1 = Math.min(selectionRect.start.x, selectionRect.current.x);
+        const y1 = Math.min(selectionRect.start.y, selectionRect.current.y);
+        const x2 = Math.max(selectionRect.start.x, selectionRect.current.x);
+        const y2 = Math.max(selectionRect.start.y, selectionRect.current.y);
+        const chosen = new Set<string>();
+        Object.values(nodes).forEach((n) => {
+          const size = n.size ?? 160;
+          const tl = worldToScreen(n.x, n.y);
+          const br = worldToScreen(n.x + size, n.y + size);
+          const nx1 = Math.min(tl.x, br.x);
+          const ny1 = Math.min(tl.y, br.y);
+          const nx2 = Math.max(tl.x, br.x);
+          const ny2 = Math.max(tl.y, br.y);
+          const overlap = !(nx2 < x1 || nx1 > x2 || ny2 < y1 || ny1 > y2);
+          if (overlap) chosen.add(n.id);
+        });
+        setSelectedIds(chosen);
+        if (chosen.size === 1) {
+          const only = Array.from(chosen)[0];
+          try { const info = buildInfoData(only); onRequestInfo?.(info); } catch {}
+        }
+      }
+      setSelectionRect({ active: false, start: null, current: null });
+      // 抑制随后一次 click 清空选择
+      setTimeout(() => { suppressNextCanvasClickRef.current = false; }, 0);
     }
   };
 
   const onCanvasClick = (e: React.MouseEvent) => {
+    if (suppressNextCanvasClickRef.current) {
+      // 跳过这次 click，以保留刚刚框选的结果
+      suppressNextCanvasClickRef.current = false;
+      return;
+    }
     // 检查是否点击了节点
     const target = e.target as HTMLElement;
     if (target.closest('.node-card')) {
@@ -394,8 +459,10 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     setContextMenu(null);
     
     // Clear selection on canvas click
-    setSelectedId(null);
+    setSelectedIds(new Set());
   };
+
+  // 点击/双击节点处理函数在 buildInfoData 定义之后声明
 
   const onCanvasContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -466,7 +533,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       size: nodeSize,
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
-    setSelectedId(id);
+  setSelectedIds(new Set([id]));
     
     setContextMenu(null); // Hide menu after action
   };
@@ -543,6 +610,39 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     dfs(rootId);
     return { rootId, nodes: nodesInfo, edges: edgesInfo };
   }, [nodes]);
+
+  // 点击节点：单选并打开信息
+  const handleNodeClick = useCallback((id: string) => {
+    const s = new Set<string>([id]);
+    setSelectedIds(s);
+    try {
+      const info = buildInfoData(id);
+      if (typeof onRequestInfo === 'function') onRequestInfo(info);
+    } catch {}
+  }, [buildInfoData, onRequestInfo]);
+
+  // 双击节点：进入编辑
+  const handleNodeDoubleClick = useCallback((id: string) => {
+    const n = nodes[id];
+    if (!n) return;
+    // no-op
+  }, []);
+
+  // 文本更新（来自 Node 内联编辑）
+  const handleUpdateText = useCallback((id: string, value: string) => {
+    setNodes((prev) => {
+      const n = prev[id];
+      if (!n) return prev;
+      const depth = getDepthIn(prev, id);
+      const newSize = computeSizeByDepth(depth);
+      const oldSize = n.size ?? 160;
+      const cx = n.x + oldSize / 2;
+      const cy = n.y + oldSize / 2;
+      const nx = cx - newSize / 2;
+      const ny = cy - newSize / 2;
+      return { ...prev, [id]: { ...n, text: value, size: newSize, x: nx, y: ny } };
+    });
+  }, []);
   
   const handleNodeMenuAction = (action: string, nodeId: string) => {
     const actionKey = `${action}-${nodeId}`;
@@ -552,8 +652,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       return;
     }
     
-    executingActionsRef.current.add(actionKey);
-    setContextMenu(null);
+  executingActionsRef.current.add(actionKey);
     
     // Clear the action key after a short delay
     setTimeout(() => {
@@ -563,7 +662,11 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     switch (action) {
       case 'expand':
         console.log('Expand action triggered for node:', nodeId);
-        openExpandOverlay(nodeId);
+        // 先关闭右键菜单，然后在下一帧再打开 Expand 面板，避免状态竞态
+        setContextMenu(null);
+        requestAnimationFrame(() => {
+          openExpandOverlay(nodeId);
+        });
         break;
       case 'minimize':
         onMinimize?.(nodeId);
@@ -572,7 +675,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         onDelete?.(nodeId);
         break;
       case 'info':
-        setSelectedId(nodeId);
+  setSelectedIds(new Set([nodeId]));
         try {
           const info = buildInfoData(nodeId);
           // Emit to parent to show on the right panel
@@ -583,6 +686,10 @@ export default function Canvas({ params, onRequestInfo }: Props) {
           // no-op
         }
         break;
+    }
+    // 其余操作执行后关闭菜单
+    if (action !== 'expand') {
+      setContextMenu(null);
     }
   };
 
@@ -622,6 +729,9 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     });
   }, []);
 
+  // Keep edgesRef in sync
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
+
   const onMove = useCallback((id: string, x: number, y: number) => {
     if (previewState.parentId === id) {
       return;
@@ -632,52 +742,65 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         setIsDragging(true);
       }
       draggingNodesRef.current.add(id);
+      // 如果是组拖拽，记录所有选中节点的原始位置
+      if (selectedIdsRef.current.size > 1 && selectedIdsRef.current.has(id)) {
+        const origin = new Map<string, { x: number; y: number }>();
+        selectedIdsRef.current.forEach(sid => {
+          const n = nodes[sid];
+          if (n) origin.set(sid, { x: n.x, y: n.y });
+        });
+        groupDragStartRef.current = { anchorId: id, origin };
+      } else {
+        groupDragStartRef.current = { anchorId: null, origin: new Map() };
+      }
     }
-    
-    // During drag, keep immediate neighbors at near-constant link length analytically
-    setNodes((prev) => {
-      const node = prev[id];
-      if (!node || (node.x === x && node.y === y)) {
-        return prev; // No change needed
-      }
-      
-      const size = node.size ?? 160;
-      const draggedCx = x + size / 2;
-      const draggedCy = y + size / 2;
-      const next: NodeMap = { ...prev, [id]: { ...node, x, y } };
-      const follow = 0.6;
-      const neighbors: string[] = [];
-      for (const [p, c] of edges) {
-        if (p === id) neighbors.push(c);
-        else if (c === id) neighbors.push(p);
-      }
-      for (const nbId of neighbors) {
-        if (draggingNodesRef.current.has(nbId)) continue; // don't move pinned nodes
-        const nb = prev[nbId];
-        if (!nb) continue;
-        const nbSize = nb.size ?? 160;
-        const nbCx = nb.x + nbSize / 2;
-        const nbCy = nb.y + nbSize / 2;
-        let dxv = nbCx - draggedCx;
-        let dyv = nbCy - draggedCy;
-        let dist = Math.hypot(dxv, dyv);
-        if (dist < 1e-4) { dist = 1e-4; dxv = 1e-4; dyv = 0; }
-        const ux = dxv / dist;
-        const uy = dyv / dist;
-        const target = Math.max(120, (size + nbSize) * 0.5 + 80);
-        const targetCx = draggedCx + ux * target;
-        const targetCy = draggedCy + uy * target;
-        const newCx = nbCx + (targetCx - nbCx) * follow;
-        const newCy = nbCy + (targetCy - nbCy) * follow;
-        next[nbId] = { ...nb, x: newCx - nbSize / 2, y: newCy - nbSize / 2 };
-      }
-      return next;
-    });
-    // Active dragging pumps energy
-    // Stronger during drag so neighbors follow responsively
-    // but cooling will settle them after release
-    setTimeout(() => { /* microtask to avoid batching override */ }, 0);
-  }, [previewState.parentId, edges]);
+    // Queue drag updates to the next animation frame (throttle)
+    dragPendingRef.current.set(id, { x, y });
+    if (dragFrameRef.current == null) {
+      dragFrameRef.current = requestAnimationFrame(() => {
+        const pending = new Map(dragPendingRef.current);
+        dragPendingRef.current.clear();
+        dragFrameRef.current = null;
+        setNodes((prev) => {
+          let next: NodeMap = prev;
+          pending.forEach(({ x, y }, dragId) => {
+            const node = next[dragId];
+            if (!node || (node.x === x && node.y === y)) {
+              return;
+            }
+            // 组拖拽：若当前拖拽的是锚点，移动所有被选中的节点
+            const group = groupDragStartRef.current;
+            if (group.anchorId === dragId && selectedIdsRef.current.size > 1) {
+              const originAnchor = group.origin.get(dragId) ?? { x, y };
+              const dx = x - originAnchor.x;
+              const dy = y - originAnchor.y;
+              let base = next === prev ? { ...prev } : next;
+              // 更新锚点
+              base[dragId] = { ...node, x, y };
+              // 其余选中节点按偏移平移
+              for (const sid of selectedIdsRef.current) {
+                if (sid === dragId) continue;
+                const orig = group.origin.get(sid);
+                const target = base[sid];
+                if (!orig || !target) continue;
+                const nx = orig.x + dx;
+                const ny = orig.y + dy;
+                if (target.x !== nx || target.y !== ny) {
+                  base[sid] = { ...target, x: nx, y: ny };
+                }
+              }
+              next = base;
+            } else {
+              const base = next === prev ? { ...prev } : next;
+              base[dragId] = { ...node, x, y };
+              next = base;
+            }
+          });
+          return next;
+        });
+      });
+    }
+  }, [previewState.parentId, nodes]);
 
   const onMoveEnd = useCallback((id: string, x: number, y: number, originalX?: number, originalY?: number) => {
     if (previewState.parentId === id) {
@@ -794,6 +917,12 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     if (draggingNodesRef.current.size === 0) {
       setIsDragging(false);
     }
+    // 清理 pending 帧
+    if (dragFrameRef.current != null) {
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    dragPendingRef.current.clear();
   }, [previewState.parentId]);
 
   const onDelete = useCallback((id: string) => {
@@ -805,7 +934,11 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     // Also remove any edges connected to this node
     setEdges((prev) => prev.filter(([parent, child]) => parent !== id && child !== id));
     // Clear selection if this node was selected
-    setSelectedId((current) => current === id ? null : current);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
     setPreviewState((prev) => {
       if (prev.parentId !== id) return prev;
       return {
@@ -1466,11 +1599,14 @@ export default function Canvas({ params, onRequestInfo }: Props) {
             onMoveEnd={onMoveEnd}
             onMinimize={onMinimize}
             onContextMenu={onNodeContextMenu}
-            highlight={selectedId === n.id}
+            highlight={selectedIds.has(n.id)}
             screenToCanvas={screenToCanvas}
             onHoldStart={handleNodeHoldStart}
             onHoldMove={handleNodeHoldMove}
             onHoldEnd={handleNodeHoldEnd}
+            onClickNode={handleNodeClick}
+            onDoubleClickNode={handleNodeDoubleClick}
+            onUpdateText={handleUpdateText}
           />
         ))}
       </div>
@@ -1488,6 +1624,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
             top: contextMenu.y,
           }}
           onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
         >
           {contextMenu.type === 'canvas' ? (
             <>
@@ -1550,12 +1688,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
           />
           <div className="relative z-10 w-full max-w-md px-6">
             <div className="rounded-2xl bg-white shadow-xl border border-slate-200 p-6">
-              <h2 className="text-lg font-semibold text-slate-900 mb-3">
-                What&apos;s the core idea?
-              </h2>
-              <p className="text-sm text-slate-500 mb-4">
-                Hold anywhere on the canvas to spark your first thought.
-              </p>
+              <h2 className="text-lg font-semibold text-slate-900 mb-3">What&apos;s the core idea?</h2>
+              <p className="text-sm text-slate-500 mb-4">Hold anywhere on the canvas to spark your first thought.</p>
               <form onSubmit={handleInputOverlaySubmit} className="space-y-4">
                 <TextField
                   autoFocus
@@ -1651,6 +1785,20 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         </div>
       )}
 
+      {/* 框选矩形可视化（屏幕坐标） */}
+      {selectionRect.active && selectionRect.start && selectionRect.current && (
+        <div
+          className="fixed z-[60] border-2 border-sky-400/70 bg-sky-200/20"
+          style={{
+            left: Math.min(selectionRect.start.x, selectionRect.current.x),
+            top: Math.min(selectionRect.start.y, selectionRect.current.y),
+            width: Math.abs(selectionRect.current.x - selectionRect.start.x),
+            height: Math.abs(selectionRect.current.y - selectionRect.start.y),
+            pointerEvents: 'none'
+          }}
+        />
+      )}
+
       {/* Snackbar 提示（重复请求等） */}
       <Snackbar
         open={snack.open}
@@ -1664,7 +1812,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       </Snackbar>
 
       <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-slate-500 text-sm bg-white/70 backdrop-blur rounded-full px-3 py-1 shadow select-none" style={{ caretColor: 'transparent' }}>
-        Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Right-click for tools
+        Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select • Right-click for tools
       </div>
     </div>
   );

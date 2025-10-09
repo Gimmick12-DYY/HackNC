@@ -16,6 +16,9 @@ type Props = {
   onHoldStart?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
   onHoldMove?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
   onHoldEnd?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
+  onClickNode?: (id: string) => void;
+  onDoubleClickNode?: (id: string) => void;
+  onUpdateText?: (id: string, value: string) => void;
 };
 
 export default function NodeCard({
@@ -29,11 +32,16 @@ export default function NodeCard({
   onHoldStart,
   onHoldMove,
   onHoldEnd,
+  onClickNode,
+  onDoubleClickNode,
+  onUpdateText,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(node.text || "");
   
   // Use refs to store callback functions to avoid dependency issues
   const onMoveRef = useRef(onMove);
@@ -99,6 +107,7 @@ export default function NodeCard({
   }, [dragging, node.id, screenToCanvas]);
 
   const startDrag = (e: React.MouseEvent) => {
+    if (editing) return; // 正在编辑时不允许拖拽
     // Don't start drag if clicking on TextField or input elements
     const target = e.target as HTMLElement;
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('.MuiTextField-root')) {
@@ -177,12 +186,23 @@ export default function NodeCard({
         }`}
         onMouseDown={startDrag}
         onContextMenu={handleContextMenu}
-        onClick={() => {
+        onClick={(e) => {
           if (node.minimized) {
             // Restore minimized node
             onMinimize?.(node.id);
           }
-          // Remove direct click to expand for readOnly nodes - now use right-click menu
+          // 点击选中/信息
+          if (!dragging) {
+            onClickNode?.(node.id);
+          }
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          if (!dragging) {
+            setEditing(true);
+            setDraft(node.text || "");
+            onDoubleClickNode?.(node.id);
+          }
         }}
         animate={{
           width: diameter,
@@ -215,20 +235,41 @@ export default function NodeCard({
         }}
       >
           {node.minimized ? null : (
-            <Tooltip title={node.text || ""} arrow enterDelay={200}>
-              <div
-                className="text-slate-800 text-sm leading-snug text-center px-2"
-                style={{
-                  display: '-webkit-box',
-                  WebkitBoxOrient: 'vertical' as any,
-                  WebkitLineClamp: 3,
-                  overflow: 'hidden',
-                  wordBreak: 'break-word'
+            editing ? (
+              <textarea
+                autoFocus
+                className="w-[90%] h-[70%] resize-none outline-none bg-transparent text-slate-800 text-sm leading-snug text-center px-2"
+                style={{ lineHeight: '1.25rem' }}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={() => { setEditing(false); onUpdateText?.(node.id, draft.trim()); }}
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    (e.target as HTMLTextAreaElement).blur();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setEditing(false);
+                    setDraft(node.text || "");
+                  }
                 }}
-              >
-                {node.text || <span className="opacity-50">Awaiting content…</span>}
-              </div>
-            </Tooltip>
+              />
+            ) : (
+              <Tooltip title={node.text || ""} arrow enterDelay={200}>
+                <div
+                  className="text-slate-800 text-sm leading-snug text-center px-2"
+                  style={{
+                    display: '-webkit-box',
+                    WebkitBoxOrient: 'vertical' as any,
+                    WebkitLineClamp: 3,
+                    overflow: 'hidden',
+                    wordBreak: 'break-word'
+                  }}
+                >
+                  {node.text || <span className="opacity-50">Awaiting content…</span>}
+                </div>
+              </Tooltip>
+            )
           )}
         </motion.div>
       </motion.div>
