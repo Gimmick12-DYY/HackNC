@@ -51,4 +51,5 @@ export type InfoData = {
   rootId: NodeID;
   nodes: Record<NodeID, NodeInfoSummary>;
   edges: Array<[NodeID, NodeID]>; // [parent, child]
+  updateText?: (value: string) => void;
 };

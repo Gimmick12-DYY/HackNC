@@ -3,11 +3,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { NodeItem } from "./types";
-import { Tooltip } from "@mui/material";
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import { getNodeColor } from "@/utils/getNodeColor";
-import { getDisplayContent } from "@/utils/getDisplayContent";
 import { useAttention } from "./Attention";
+import {
+  getVisualDiameter,
+  VISUAL_NODE_MINIMIZED_SIZE,
+} from "@/utils/getVisualDiameter";
 
 const toRgba = (hex: string, alpha: number) => {
   const sanitized = hex.replace("#", "");
@@ -32,9 +34,7 @@ type Props = {
   onHoldStart?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
   onHoldMove?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
   onHoldEnd?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
-  onClickNode?: (id: string) => void;
   onDoubleClickNode?: (id: string) => void;
-  onUpdateText?: (id: string, value: string) => void;
   distance?: number;
 };
 
@@ -49,9 +49,7 @@ export default function NodeCard({
   onHoldStart,
   onHoldMove,
   onHoldEnd,
-  onClickNode,
   onDoubleClickNode,
-  onUpdateText,
   distance = Number.POSITIVE_INFINITY,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -59,29 +57,26 @@ export default function NodeCard({
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(node.full || node.text || "");
-  const sanitizedDistance = useMemo(
+  const normalizedDistance = useMemo(
     () =>
       Number.isFinite(distance)
         ? Math.max(0, Math.floor(distance as number))
         : Number.POSITIVE_INFINITY,
     [distance]
   );
-  const sizeLevels = NodeVisualConfig.SIZE_LEVELS as Record<number, number>;
-  const baseDiameter = node.minimized ? 24 : node.size ?? sizeLevels[0];
-  const targetDiameter = node.minimized
-    ? 24
-    : Number.isFinite(distance) && sizeLevels[sanitizedDistance] !== undefined
-    ? sizeLevels[sanitizedDistance]
-    : NodeVisualConfig.SIZE_LEVELS.SMALLEST_SIZE;
-  const scaleFactor =
-    node.minimized || baseDiameter === 0 ? 1 : targetDiameter / baseDiameter;
-  const visualScale = node.minimized ? 0.85 : scaleFactor;
-  const displayContent = useMemo(
-    () => getDisplayContent(node, distance),
-    [node, distance]
+  const targetDiameter = getVisualDiameter(
+    node,
+    Number.isFinite(distance) ? (distance as number) : undefined
   );
+  const defaultBaseDiameter =
+    (NodeVisualConfig.SIZE_LEVELS as Record<number, number>)[0] ??
+    targetDiameter;
+  const baseDiameter = node.minimized
+    ? VISUAL_NODE_MINIMIZED_SIZE
+    : node.size ?? defaultBaseDiameter;
+  const positionOffset = node.minimized
+    ? 0
+    : (baseDiameter - targetDiameter) / 2;
   const nodeColor = getNodeColor(node.type);
   const backgroundColor = node.minimized
     ? node.dotColor ?? nodeColor
@@ -89,21 +84,9 @@ export default function NodeCard({
   const borderColor = node.minimized ? nodeColor : toRgba(nodeColor, 0.5);
   const isFocused = focusedNodeId === node.id;
   const transition = NodeVisualConfig.TRANSITION;
-  const fontSizes = [16, 13, 11, 10];
-  const fontSize =
-    !Number.isFinite(distance) || sanitizedDistance > 3
-      ? 9
-      : fontSizes[sanitizedDistance];
-  const textOpacity = !Number.isFinite(distance)
-    ? 0.5
-    : sanitizedDistance === 0
-    ? 1
-    : sanitizedDistance === 1
-    ? 0.9
-    : sanitizedDistance === 2
-    ? 0.75
-    : 0.6;
-  
+  const displayEmoji = node.emoji?.trim();
+  const ariaLabel = node.full || node.text || "Idea node";
+
   // Use refs to store callback functions to avoid dependency issues
   const onMoveRef = useRef(onMove);
   const onMoveEndRef = useRef(onMoveEnd);
@@ -168,7 +151,6 @@ export default function NodeCard({
   }, [dragging, node.id, screenToCanvas]);
 
   const startDrag = (e: React.MouseEvent) => {
-    if (editing) return; // 正在编辑时不允许拖拽
     // Don't start drag if clicking on TextField or input elements
     const target = e.target as HTMLElement;
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('.MuiTextField-root')) {
@@ -211,23 +193,15 @@ export default function NodeCard({
       data-node-id={node.id}
       style={{
         position: "absolute",
-        left: 0,
-        top: 0,
+        left: node.x + positionOffset,
+        top: node.y + positionOffset,
         zIndex: highlight || isFocused ? 30 : 10,
-        width: baseDiameter,
-        height: baseDiameter,
       }}
-      initial={{
-        opacity: 0.6,
-        x: node.x,
-        y: node.y,
-      }}
+      initial={false}
       animate={{
         opacity: 1,
-        x: node.x,
-        y: node.y,
-        width: baseDiameter,
-        height: baseDiameter,
+        width: targetDiameter,
+        height: targetDiameter,
       }}
       transition={{
         type: dragging ? "tween" : "spring",
@@ -237,8 +211,6 @@ export default function NodeCard({
         damping: 26,
         mass: 0.9,
         opacity: { duration: 0.2 },
-        x: { duration: dragging ? 0 : 0.001 },
-        y: { duration: dragging ? 0 : 0.001 },
       }}
     >
       <motion.div
@@ -249,16 +221,11 @@ export default function NodeCard({
           if (node.minimized) {
             onMinimize?.(node.id);
           }
-          if (!dragging) {
-            setFocusedNode(node.id);
-            onClickNode?.(node.id);
-          }
         }}
         onDoubleClick={(e) => {
           e.stopPropagation();
           if (!dragging) {
-            setEditing(true);
-            setDraft(node.full || node.text || "");
+            setFocusedNode(node.id);
             onDoubleClickNode?.(node.id);
           }
         }}
@@ -267,16 +234,14 @@ export default function NodeCard({
           borderColor,
           borderWidth: node.minimized ? 0 : isFocused ? 3 : 2,
           borderStyle: "solid",
-          scale: visualScale,
         }}
         transition={{
           duration: dragging ? 0 : transition.duration,
           ease: dragging ? "linear" : transition.ease,
         }}
         style={{
-          width: baseDiameter,
-          height: baseDiameter,
-          transformOrigin: "center",
+          width: "100%",
+          height: "100%",
           boxShadow:
             highlight || isFocused
               ? "0 12px 30px rgba(15,23,42,0.25)"
@@ -295,53 +260,24 @@ export default function NodeCard({
           }}
           className="flex h-full w-full items-center justify-center px-2"
         >
-          {node.minimized
-            ? null
-            : editing
-            ? (
-              <textarea
-                autoFocus
-                className="w-[90%] h-[70%] resize-none outline-none bg-transparent text-center leading-snug"
-                style={{ lineHeight: "1.25rem", fontSize }}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={() => {
-                  setEditing(false);
-                  onUpdateText?.(node.id, draft.trim());
-                }}
-                onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                    e.preventDefault();
-                    (e.target as HTMLTextAreaElement).blur();
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    setEditing(false);
-                    setDraft(node.full || node.text || "");
-                  }
-                }}
-              />
-            )
-            : (
-              <Tooltip title={node.full || node.text || ""} arrow enterDelay={200}>
-                <div
-                  className="text-center"
-                  style={{
-                    display: "-webkit-box",
-                    WebkitBoxOrient: "vertical" as const,
-                    WebkitLineClamp: 3,
-                    overflow: "hidden",
-                    wordBreak: "break-word",
-                    fontSize,
-                    opacity: textOpacity,
-                    color: "#1f2937",
-                  }}
-                >
-                  {displayContent || (
-                    <span className="opacity-50">Awaiting content...</span>
-                  )}
-                </div>
-              </Tooltip>
-            )}
+          {node.minimized ? null : (
+            <div
+              className="flex h-full w-full items-center justify-center"
+              aria-label={ariaLabel}
+            >
+              {displayEmoji ? (
+                <span className="text-2xl leading-none">{displayEmoji}</span>
+              ) : (
+                <>
+                  <span
+                    aria-hidden
+                    className="h-2.5 w-2.5 rounded-full bg-slate-500/70"
+                  />
+                  <span className="sr-only">{ariaLabel}</span>
+                </>
+              )}
+            </div>
+          )}
         </motion.div>
       </motion.div>
     </motion.div>

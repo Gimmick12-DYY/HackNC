@@ -474,10 +474,6 @@ export default function Canvas({ params, onRequestInfo }: Props) {
           if (overlap) chosen.add(n.id);
         });
         setSelectedIds(chosen);
-        if (chosen.size === 1) {
-          const only = Array.from(chosen)[0];
-          try { const info = buildInfoData(only); onRequestInfo?.(info); } catch {}
-        }
       }
       setSelectionRect({ active: false, start: null, current: null });
       // 抑制随后一次 click 清空选择
@@ -665,18 +661,12 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     const s = new Set<string>([id]);
     setSelectedIds(s);
     setFocusedNode(id);
-    try {
-      const info = buildInfoData(id);
-      if (typeof onRequestInfo === 'function') onRequestInfo(info);
-    } catch {}
-  }, [buildInfoData, onRequestInfo, setFocusedNode]);
+  }, [setFocusedNode]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
-    const n = nodes[id];
-    if (!n) return;
-    // Placeholder for future double-click behaviour (e.g., open inspector)
-  }, [nodes]);
+    handleNodeClick(id);
+  }, [handleNodeClick]);
 
   // 文本更新（来自 Node 内联编辑）
   const handleUpdateText = useCallback(
@@ -715,6 +705,18 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     },
     [getDepthIn, computeSizeByDepth]
   );
+
+  const emitInfoFor = useCallback(
+    (id: string) => {
+      if (!onRequestInfo) return;
+      const info = buildInfoData(id);
+      onRequestInfo({
+        ...info,
+        updateText: (value: string) => handleUpdateText(id, value),
+      });
+    },
+    [onRequestInfo, buildInfoData, handleUpdateText]
+  );
   
   const handleNodeMenuAction = (action: string, nodeId: string) => {
     const actionKey = `${action}-${nodeId}`;
@@ -747,23 +749,21 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         onDelete?.(nodeId);
         break;
       case 'info':
-  setSelectedIds(new Set([nodeId]));
-        try {
-          const info = buildInfoData(nodeId);
-          // Emit to parent to show on the right panel
-          if (typeof (onRequestInfo) === 'function') {
-            onRequestInfo(info);
-          }
-        } catch {
-          // no-op
-        }
+        setSelectedIds(new Set([nodeId]));
+        setFocusedNode(nodeId);
         break;
     }
-    // 其余操作执行后关闭菜单
-    if (action !== 'expand') {
-      setContextMenu(null);
-    }
-  };
+      // 其余操作执行后关闭菜单
+      if (action !== 'expand') {
+        setContextMenu(null);
+      }
+    };
+
+  useEffect(() => {
+    if (selectedIds.size !== 1) return;
+    const [id] = Array.from(selectedIds);
+    emitInfoFor(id);
+  }, [selectedIds, emitInfoFor]);
 
   const onNodeContextMenu = useCallback((e: React.MouseEvent, nodeId: string) => {
     e.preventDefault();
@@ -1730,9 +1730,7 @@ Respond with valid JSON only.`;
             onHoldStart={handleNodeHoldStart}
             onHoldMove={handleNodeHoldMove}
             onHoldEnd={handleNodeHoldEnd}
-            onClickNode={handleNodeClick}
             onDoubleClickNode={handleNodeDoubleClick}
-            onUpdateText={handleUpdateText}
             distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
           />
         ))}
