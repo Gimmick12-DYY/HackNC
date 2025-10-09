@@ -45,7 +45,7 @@ export default function SubNode({ node, onMove, onGenerate }: Props) {
         style={{ width: Math.max(120, Math.min(node.size ?? 140, 420)) }}
       >
         <div className="text-slate-700 text-sm leading-tight whitespace-pre-wrap break-words">
-          {node.text}
+          {node.full || node.text || ""}
         </div>
       </Paper>
     </div>

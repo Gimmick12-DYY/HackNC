@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
+type GeneratedNodeContent = {
+  full: string;
+  phrase?: string;
+  short?: string;
+  emoji?: string;
+  type?: string;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const { prompt, count, phraseLength, temperature } = await req.json();
@@ -11,10 +19,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const sys = `You are a concise brainstorming assistant. 
-          Generate only a JSON array of ${count} short, 
-          evocative phrases of around length ${phraseLength}, 
-          no extra text.`;
+    const sys = `You are a concise brainstorming assistant.
+Return valid JSON only: an array with exactly ${count} objects.
+Each object must include:
+- "full": one sentence elaborating the idea (≈ ${phraseLength * 8} characters),
+- "phrase": a 2-3 word fragment,
+- "short": a single word or emoji,
+- "emoji": one emoji character,
+- "type": one of "idea", "argument", "counter", "reference", "analogy".
+Do not add commentary before or after the JSON.`;
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${apiKey}`,
@@ -53,38 +66,93 @@ export async function POST(req: NextRequest) {
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? "[]";
     // Robust extraction: try to parse fenced code, then first bracketed array, then fallback
-    const extractItems = (txt: string): string[] => {
+    const extractItems = (txt: string): GeneratedNodeContent[] => {
       const clean = txt.trim();
-      // Extract inner code fence if present
       const fence = clean.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
       const inner = fence ? fence[1].trim() : clean;
-      // Find first JSON array in text
       const arrMatch = inner.match(/\[[\s\S]*?\]/);
       const candidate = arrMatch ? arrMatch[0] : inner;
-      const tryParse = (s: string): string[] | null => {
+      const hydrate = (input: unknown): GeneratedNodeContent[] => {
+        if (!Array.isArray(input)) return [];
+        return input
+          .map((entry): GeneratedNodeContent | null => {
+            if (entry && typeof entry === "object") {
+              const obj = entry as Record<string, unknown>;
+              const full = (obj.full ?? obj.text ?? obj.description ?? obj.phrase) as
+                | string
+                | undefined;
+              if (!full) return null;
+              const phrase = obj.phrase as string | undefined;
+              const short = obj.short as string | undefined;
+              const emoji = obj.emoji as string | undefined;
+              const type = obj.type as string | undefined;
+              const sanitize = (value?: string) =>
+                value ? String(value).trim() : undefined;
+              const sanitizedFull = String(full).trim();
+              if (!sanitizedFull) return null;
+              return {
+                full: sanitizedFull,
+                phrase: sanitize(phrase),
+                short: sanitize(short),
+                emoji: sanitize(emoji),
+                type: sanitize(type),
+              };
+            }
+            if (typeof entry === "string") {
+              const value = entry.trim();
+              if (!value) return null;
+              const firstWord = value.split(/\s+/)[0] || value;
+              return {
+                full: value,
+                phrase: value,
+                short: firstWord,
+                emoji: "",
+                type: "idea",
+              };
+            }
+            return null;
+          })
+          .filter((item): item is GeneratedNodeContent => Boolean(item));
+      };
+
+      const tryParse = (s: string): GeneratedNodeContent[] => {
         try {
           const parsed = JSON.parse(s);
-          if (Array.isArray(parsed)) return parsed.map((v) => String(v));
-          return null;
+          return hydrate(parsed);
         } catch {
-          return null;
+          return [];
         }
       };
+
       let arr = tryParse(candidate);
-      if (!arr) {
-        // Try with single quotes swapped
+      if (!arr.length) {
         const swapped = candidate.replace(/'(.*?)'/g, '"$1"');
         arr = tryParse(swapped);
       }
-      if (!arr) {
-        // Fallback: split by lines/bullets/numbers
+      if (!arr.length) {
         arr = inner
           .split(/\r?\n|\u2022|^-\s+/gm)
           .map((s) => s.replace(/^[-*\d+.\)\s]+/, "").trim())
-          .filter(Boolean);
+          .filter(Boolean)
+          .map((value) => {
+            const word = value.split(/\s+/)[0] || value;
+            return {
+              full: value,
+              phrase: value,
+              short: word,
+              emoji: "",
+              type: "idea",
+            };
+          });
       }
-      const n = typeof count === "number" ? count : Number(count) || 5;
-      return arr.slice(0, n);
+      const limit = typeof count === "number" ? count : Number(count) || 5;
+      return arr.slice(0, limit).map((item) => ({
+        full: item.full,
+        phrase: item.phrase ?? item.full,
+        short: item.short ?? item.full.split(/\s+/)[0] ?? item.full,
+        emoji: item.emoji ?? "",
+        type: item.type ?? "idea",
+      }));
     };
 
     const items = extractItems(content);

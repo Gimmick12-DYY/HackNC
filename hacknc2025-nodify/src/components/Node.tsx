@@ -1,9 +1,25 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { NodeItem } from "./types";
 import { Tooltip } from "@mui/material";
+import { NodeVisualConfig } from "@/config/nodeVisualConfig";
+import { getNodeColor } from "@/utils/getNodeColor";
+import { getDisplayContent } from "@/utils/getDisplayContent";
+import { useAttention } from "./Attention";
+
+const toRgba = (hex: string, alpha: number) => {
+  const sanitized = hex.replace("#", "");
+  if (sanitized.length !== 6) {
+    return `rgba(204, 204, 204, ${alpha})`;
+  }
+  const value = parseInt(sanitized, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
 
 type Props = {
   node: NodeItem;
@@ -19,6 +35,7 @@ type Props = {
   onClickNode?: (id: string) => void;
   onDoubleClickNode?: (id: string) => void;
   onUpdateText?: (id: string, value: string) => void;
+  distance?: number;
 };
 
 export default function NodeCard({
@@ -35,13 +52,57 @@ export default function NodeCard({
   onClickNode,
   onDoubleClickNode,
   onUpdateText,
+  distance = Number.POSITIVE_INFINITY,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const { setFocusedNode, focusedNodeId } = useAttention();
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(node.text || "");
+  const [draft, setDraft] = useState(node.full || node.text || "");
+  const sanitizedDistance = useMemo(
+    () =>
+      Number.isFinite(distance)
+        ? Math.max(0, Math.floor(distance as number))
+        : Number.POSITIVE_INFINITY,
+    [distance]
+  );
+  const sizeLevels = NodeVisualConfig.SIZE_LEVELS as Record<number, number>;
+  const baseDiameter = node.minimized ? 24 : node.size ?? sizeLevels[0];
+  const targetDiameter = node.minimized
+    ? 24
+    : Number.isFinite(distance) && sizeLevels[sanitizedDistance] !== undefined
+    ? sizeLevels[sanitizedDistance]
+    : NodeVisualConfig.SIZE_LEVELS.SMALLEST_SIZE;
+  const scaleFactor =
+    node.minimized || baseDiameter === 0 ? 1 : targetDiameter / baseDiameter;
+  const visualScale = node.minimized ? 0.85 : scaleFactor;
+  const displayContent = useMemo(
+    () => getDisplayContent(node, distance),
+    [node, distance]
+  );
+  const nodeColor = getNodeColor(node.type);
+  const backgroundColor = node.minimized
+    ? node.dotColor ?? nodeColor
+    : toRgba(nodeColor, 0.18);
+  const borderColor = node.minimized ? nodeColor : toRgba(nodeColor, 0.5);
+  const isFocused = focusedNodeId === node.id;
+  const transition = NodeVisualConfig.TRANSITION;
+  const fontSizes = [16, 13, 11, 10];
+  const fontSize =
+    !Number.isFinite(distance) || sanitizedDistance > 3
+      ? 9
+      : fontSizes[sanitizedDistance];
+  const textOpacity = !Number.isFinite(distance)
+    ? 0.5
+    : sanitizedDistance === 0
+    ? 1
+    : sanitizedDistance === 1
+    ? 0.9
+    : sanitizedDistance === 2
+    ? 0.75
+    : 0.6;
   
   // Use refs to store callback functions to avoid dependency issues
   const onMoveRef = useRef(onMove);
@@ -134,9 +195,6 @@ export default function NodeCard({
     onHoldStartRef.current?.({ nodeId: node.id, clientX: e.clientX, clientY: e.clientY });
   };
 
-  const diameter = node.minimized 
-    ? 24 // Larger dot size to be more visible
-    : (node.size ?? 160);
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -152,47 +210,47 @@ export default function NodeCard({
       className="select-none node-card"
       data-node-id={node.id}
       style={{
-        position: 'absolute',
+        position: "absolute",
         left: 0,
         top: 0,
-        zIndex: highlight ? 30 : 10,
+        zIndex: highlight || isFocused ? 30 : 10,
+        width: baseDiameter,
+        height: baseDiameter,
       }}
-      initial={{ scale: 0.6, opacity: 0.5, x: node.x, y: node.y }}
-      animate={{
-        scale: 1,
-        opacity: 1,
-        width: diameter,
-        height: diameter,
-        rotate: 0,
+      initial={{
+        opacity: 0.6,
         x: node.x,
         y: node.y,
       }}
+      animate={{
+        opacity: 1,
+        x: node.x,
+        y: node.y,
+        width: baseDiameter,
+        height: baseDiameter,
+      }}
       transition={{
         type: dragging ? "tween" : "spring",
-        ease: dragging ? "linear" : undefined,
-        duration: dragging ? 0 : 0.2,
+        ease: dragging ? "linear" : transition.ease,
+        duration: dragging ? 0 : transition.duration,
         stiffness: 220,
         damping: 26,
         mass: 0.9,
+        opacity: { duration: 0.2 },
         x: { duration: dragging ? 0 : 0.001 },
         y: { duration: dragging ? 0 : 0.001 },
       }}
     >
       <motion.div
-        className={`rounded-full backdrop-blur shadow-md border flex items-center justify-center text-center ${
-          node.minimized 
-            ? 'border-transparent' 
-            : `bg-[#fffaf3] border-[#e6dccb] px-4 py-4 ${highlight ? 'ring-4 ring-sky-200/60 shadow-xl' : ''}`
-        }`}
+        className="rounded-full backdrop-blur flex items-center justify-center text-center px-4 py-4"
         onMouseDown={startDrag}
         onContextMenu={handleContextMenu}
-        onClick={(e) => {
+        onClick={() => {
           if (node.minimized) {
-            // Restore minimized node
             onMinimize?.(node.id);
           }
-          // 点击选中/信息
           if (!dragging) {
+            setFocusedNode(node.id);
             onClickNode?.(node.id);
           }
         }}
@@ -200,81 +258,92 @@ export default function NodeCard({
           e.stopPropagation();
           if (!dragging) {
             setEditing(true);
-            setDraft(node.text || "");
+            setDraft(node.full || node.text || "");
             onDoubleClickNode?.(node.id);
           }
         }}
         animate={{
-          width: diameter,
-          height: diameter,
-          backgroundColor: node.minimized ? node.dotColor : '#fffaf3',
-          scale: node.minimized ? 0.8 : 1,
+          backgroundColor,
+          borderColor,
+          borderWidth: node.minimized ? 0 : isFocused ? 3 : 2,
+          borderStyle: "solid",
+          scale: visualScale,
         }}
         transition={{
-          type: dragging ? "tween" : "spring",
-          ease: dragging ? "linear" : undefined,
-          duration: dragging ? 0 : 0.2,
-          stiffness: 320,
-          damping: 28,
-          mass: 0.6
+          duration: dragging ? 0 : transition.duration,
+          ease: dragging ? "linear" : transition.ease,
         }}
         style={{
-          boxShadow: node.minimized 
-            ? '0 2px 8px rgba(0,0,0,0.15)' 
-            : '0 4px 16px rgba(0,0,0,0.1)'
+          width: baseDiameter,
+          height: baseDiameter,
+          transformOrigin: "center",
+          boxShadow:
+            highlight || isFocused
+              ? "0 12px 30px rgba(15,23,42,0.25)"
+              : "0 6px 18px rgba(15,23,42,0.16)",
+          color: node.minimized ? "#ffffff" : "#1f2937",
         }}
       >
         <motion.div
           animate={{
             opacity: node.minimized ? 0 : 1,
-            scale: node.minimized ? 0.8 : 1,
+            scale: node.minimized ? 0.75 : 1,
           }}
-        transition={{
-          duration: 0.3,
-          ease: "easeInOut"
-        }}
-      >
-          {node.minimized ? null : (
-            editing ? (
+          transition={{
+            duration: transition.duration,
+            ease: transition.ease,
+          }}
+          className="flex h-full w-full items-center justify-center px-2"
+        >
+          {node.minimized
+            ? null
+            : editing
+            ? (
               <textarea
                 autoFocus
-                className="w-[90%] h-[70%] resize-none outline-none bg-transparent text-slate-800 text-sm leading-snug text-center px-2"
-                style={{ lineHeight: '1.25rem' }}
+                className="w-[90%] h-[70%] resize-none outline-none bg-transparent text-center leading-snug"
+                style={{ lineHeight: "1.25rem", fontSize }}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                onBlur={() => { setEditing(false); onUpdateText?.(node.id, draft.trim()); }}
+                onBlur={() => {
+                  setEditing(false);
+                  onUpdateText?.(node.id, draft.trim());
+                }}
                 onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                     e.preventDefault();
                     (e.target as HTMLTextAreaElement).blur();
-                  } else if (e.key === 'Escape') {
+                  } else if (e.key === "Escape") {
                     e.preventDefault();
                     setEditing(false);
-                    setDraft(node.text || "");
+                    setDraft(node.full || node.text || "");
                   }
                 }}
               />
-            ) : (
-              <Tooltip title={node.text || ""} arrow enterDelay={200}>
+            )
+            : (
+              <Tooltip title={node.full || node.text || ""} arrow enterDelay={200}>
                 <div
-                  className="text-slate-800 text-sm leading-snug text-center px-2"
+                  className="text-center"
                   style={{
-                    display: '-webkit-box',
-                    WebkitBoxOrient: 'vertical' as any,
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical" as const,
                     WebkitLineClamp: 3,
-                    overflow: 'hidden',
-                    wordBreak: 'break-word'
+                    overflow: "hidden",
+                    wordBreak: "break-word",
+                    fontSize,
+                    opacity: textOpacity,
+                    color: "#1f2937",
                   }}
                 >
-                  {node.text || <span className="opacity-50">Awaiting content…</span>}
+                  {displayContent || (
+                    <span className="opacity-50">Awaiting content...</span>
+                  )}
                 </div>
               </Tooltip>
-            )
-          )}
+            )}
         </motion.div>
       </motion.div>
-      
-
     </motion.div>
   );
 }

@@ -1,18 +1,37 @@
 export type NodeID = string;
 
-export type NodeItem = {
+export type NodeContentLevel = "full" | "phrase" | "short" | "emoji";
+
+export interface NodeData {
   id: NodeID;
-  text: string;
+  level: number;
+  type: string;
+  full: string;
+  phrase?: string;
+  short?: string;
+  emoji?: string;
+}
+
+export interface NodeItem extends NodeData {
   x: number;
   y: number;
   parentId?: NodeID | null;
   children: NodeID[];
   expanded?: boolean;
-  size?: number; // computed bubble width
-  minimized?: boolean; // whether node is minimized to a dot
-  dotColor?: string; // color of the minimized dot
-  isBouncing?: boolean; // for collision bounce animation
-};
+  size?: number;
+  minimized?: boolean;
+  dotColor?: string;
+  isBouncing?: boolean;
+  /**
+   * Legacy field for backwards compatibility with older node text usage.
+   * Prefer the multi-level content fields above.
+   */
+  text?: string;
+}
+
+export interface NodeGraph {
+  adjacency: Record<NodeID, NodeID[]>;
+}
 
 export type DashboardParams = {
   nodeCount: number; // N

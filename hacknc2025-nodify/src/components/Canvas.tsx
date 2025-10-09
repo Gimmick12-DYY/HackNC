@@ -4,12 +4,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import NodeCard from "./Node";
-import { DashboardParams, NodeItem, InfoData, NodeID } from "./types";
+import { DashboardParams, NodeItem, InfoData, NodeID, NodeGraph, NodeData } from "./types";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { Button, TextField, Snackbar, Alert } from "@mui/material";
+import { useAttention } from "./Attention";
+import { getNodeColor } from "@/utils/getNodeColor";
 
 type Props = {
   params: DashboardParams;
@@ -17,6 +19,7 @@ type Props = {
 };
 
 type NodeMap = Record<string, NodeItem>;
+type GeneratedNodeContent = Omit<NodeData, "id" | "level">;
 
 type InputOverlayState = {
   open: boolean;
@@ -48,20 +51,10 @@ type ExpandOverlayState = {
   count: number; // 选择扩展数量
 };
 
-const normalizeAngle = (angle: number) => {
-  const twoPi = Math.PI * 2;
-  let normalized = angle % twoPi;
-  if (normalized > Math.PI) normalized -= twoPi;
-  if (normalized < -Math.PI) normalized += twoPi;
-  return normalized;
-};
-
 const HOLD_DURATION_MS = 500;
 const ROOT_HOLD_MOVE_THRESHOLD = 18;
 const NODE_HOLD_MOVE_THRESHOLD = 24;
 const PREVIEW_PLACEHOLDER_SIZE = 150;
-const SWIPE_TRIGGER_DISTANCE = 70;
-const SWIPE_ANGLE_TOLERANCE = Math.PI / 5;
 
 export default function Canvas({ params, onRequestInfo }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
@@ -107,6 +100,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const showSnack = useCallback((text: string, severity: 'info' | 'warning' | 'error' | 'success' = 'info') => {
     setSnack({ open: true, text, severity });
   }, []);
+
+  const { distances, focusedNodeId, setFocusedNode, recomputeDistances } = useAttention();
   
   // 视口状态：缩放和平移
   const [scale, setScale] = useState(1);
@@ -134,16 +129,56 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   // 组拖拽：记录起点和各节点原始位置
   const groupDragStartRef = useRef<{ anchorId: string | null; origin: Map<string, { x: number; y: number }> }>({ anchorId: null, origin: new Map() });
 
+  const attentionGraph = useMemo<NodeGraph>(() => {
+    const adjacency: Record<string, Set<string>> = {};
+    Object.values(nodes).forEach((node) => {
+      if (!adjacency[node.id]) adjacency[node.id] = new Set();
+      node.children.forEach((childId) => {
+        if (!adjacency[node.id]) adjacency[node.id] = new Set();
+        adjacency[node.id].add(childId);
+        if (!adjacency[childId]) adjacency[childId] = new Set();
+        adjacency[childId].add(node.id);
+      });
+      if (node.parentId) {
+        adjacency[node.id].add(node.parentId);
+        if (!adjacency[node.parentId]) adjacency[node.parentId] = new Set();
+        adjacency[node.parentId].add(node.id);
+      }
+    });
+
+    Object.keys(nodes).forEach((id) => {
+      if (!adjacency[id]) adjacency[id] = new Set();
+    });
+
+    const normalized: Record<string, string[]> = {};
+    Object.entries(adjacency).forEach(([id, neighbors]) => {
+      normalized[id] = Array.from(neighbors);
+    });
+
+    return { adjacency: normalized };
+  }, [nodes]);
+
   const nextId = () => `n_${idRef.current++}`;
 
+  useEffect(() => {
+    const fallbackId =
+      focusedNodeId && nodes[focusedNodeId]
+        ? focusedNodeId
+        : Object.keys(nodes)[0] ?? null;
+    recomputeDistances(attentionGraph, fallbackId);
+  }, [attentionGraph, focusedNodeId, nodes, recomputeDistances]);
+
   // Fixed node sizes by hierarchy depth (0=root)
-  const NODE_SIZES = [220, 160, 120, 100];
-  const computeSizeByDepth = (depth: number) => {
-    if (depth < 0) return NODE_SIZES[0];
-    if (depth >= NODE_SIZES.length) return NODE_SIZES[NODE_SIZES.length - 1];
-    return NODE_SIZES[depth];
-  };
-  const getDepthIn = (map: NodeMap, nodeId: string): number => {
+  const NODE_SIZES = useMemo(() => [220, 160, 120, 100] as const, []);
+  const computeSizeByDepth = useCallback(
+    (depth: number) => {
+      if (depth < 0) return NODE_SIZES[0];
+      if (depth >= NODE_SIZES.length) return NODE_SIZES[NODE_SIZES.length - 1];
+      return NODE_SIZES[depth];
+    },
+    [NODE_SIZES]
+  );
+  const getDepthIn = useCallback((map: NodeMap, nodeId: string): number => {
     let depth = 0;
     const visited = new Set<string>();
     let cur: NodeItem | undefined = map[nodeId];
@@ -156,7 +191,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       cur = parentNode;
     }
     return depth;
-  };
+  }, []);
 
   // No physics loop – keep only direct neighbor positioning during drag
 
@@ -257,7 +292,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     setExpandOverlay({
       open: true,
       nodeId,
-      text: n.text || "",
+      text: n.full || n.text || "",
       count: Math.max(1, params.nodeCount || 3),
     });
   }, [nodes, params.nodeCount, showSnack]);
@@ -304,10 +339,17 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       id,
       x: safeX,
       y: safeY,
-      text,
       parentId: parentId ?? null,
       children: [],
       size: computeSizeByDepth(depth),
+      level: depth,
+      type: "idea",
+      full: text,
+      phrase: text,
+      short: text,
+      emoji: "",
+      dotColor: getNodeColor("idea"),
+      text,
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
     if (parentId) setEdges((e) => [...e, [parentId, id]]);
@@ -527,10 +569,17 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       id,
       x: position.x,
       y: position.y,
-      text: "",
       parentId: null,
       children: [],
       size: nodeSize,
+      level: 0,
+      type: "idea",
+      full: "",
+      phrase: "",
+      short: "",
+      emoji: "",
+      text: "",
+      dotColor: getNodeColor("idea"),
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
   setSelectedIds(new Set([id]));
@@ -600,7 +649,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       visited.add(id);
       const n = nodes[id];
       if (!n) return;
-      nodesInfo[id] = { id: n.id, text: n.text, parentId: n.parentId ?? null, children: [...n.children] };
+      nodesInfo[id] = { id: n.id, text: n.full || n.text || "", parentId: n.parentId ?? null, children: [...n.children] };
       for (const childId of n.children) {
         edgesInfo.push([id, childId]);
         dfs(childId);
@@ -615,34 +664,57 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const handleNodeClick = useCallback((id: string) => {
     const s = new Set<string>([id]);
     setSelectedIds(s);
+    setFocusedNode(id);
     try {
       const info = buildInfoData(id);
       if (typeof onRequestInfo === 'function') onRequestInfo(info);
     } catch {}
-  }, [buildInfoData, onRequestInfo]);
+  }, [buildInfoData, onRequestInfo, setFocusedNode]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
     const n = nodes[id];
     if (!n) return;
-    // no-op
-  }, []);
+    // Placeholder for future double-click behaviour (e.g., open inspector)
+  }, [nodes]);
 
   // 文本更新（来自 Node 内联编辑）
-  const handleUpdateText = useCallback((id: string, value: string) => {
-    setNodes((prev) => {
-      const n = prev[id];
-      if (!n) return prev;
-      const depth = getDepthIn(prev, id);
-      const newSize = computeSizeByDepth(depth);
-      const oldSize = n.size ?? 160;
-      const cx = n.x + oldSize / 2;
-      const cy = n.y + oldSize / 2;
-      const nx = cx - newSize / 2;
-      const ny = cy - newSize / 2;
-      return { ...prev, [id]: { ...n, text: value, size: newSize, x: nx, y: ny } };
-    });
-  }, []);
+  const handleUpdateText = useCallback(
+    (id: string, value: string) => {
+      setNodes((prev) => {
+        const n = prev[id];
+        if (!n) return prev;
+        const depth = getDepthIn(prev, id);
+        const newSize = computeSizeByDepth(depth);
+        const oldSize = n.size ?? 160;
+        const cx = n.x + oldSize / 2;
+        const cy = n.y + oldSize / 2;
+        const nx = cx - newSize / 2;
+        const ny = cy - newSize / 2;
+        const cleaned = value.trim();
+        const fallbackPhrase = cleaned || n.phrase || n.full;
+        const fallbackShort =
+          cleaned.split(/\s+/)[0] ||
+          n.short ||
+          (fallbackPhrase ? fallbackPhrase.split(/\s+/)[0] : "");
+        return {
+          ...prev,
+          [id]: {
+            ...n,
+            text: cleaned,
+            full: cleaned,
+            phrase: fallbackPhrase,
+            short: fallbackShort,
+            dotColor: getNodeColor(n.type),
+            size: newSize,
+            x: nx,
+            y: ny,
+          },
+        };
+      });
+    },
+    [getDepthIn, computeSizeByDepth]
+  );
   
   const handleNodeMenuAction = (action: string, nodeId: string) => {
     const actionKey = `${action}-${nodeId}`;
@@ -682,7 +754,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
           if (typeof (onRequestInfo) === 'function') {
             onRequestInfo(info);
           }
-        } catch (e) {
+        } catch {
           // no-op
         }
         break;
@@ -727,7 +799,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       type: 'node', 
       nodeId 
     });
-  }, []);
+  }, [setContextMenu]);
 
   // Keep edgesRef in sync
   useEffect(() => { edgesRef.current = edges; }, [edges]);
@@ -774,7 +846,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
               const originAnchor = group.origin.get(dragId) ?? { x, y };
               const dx = x - originAnchor.x;
               const dy = y - originAnchor.y;
-              let base = next === prev ? { ...prev } : next;
+              const base = next === prev ? { ...prev } : next;
               // 更新锚点
               base[dragId] = { ...node, x, y };
               // 其余选中节点按偏移平移
@@ -1094,7 +1166,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         });
       });
       
-      const effectiveText = (options?.textOverride ?? nodeData?.text ?? "").trim();
+      const effectiveText = (options?.textOverride ?? nodeData?.full ?? nodeData?.text ?? "").trim();
       if (!nodeData || !effectiveText) {
         generatingNodesRef.current.delete(id);
         return;
@@ -1102,8 +1174,16 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       
       try {
   const count = Math.max(1, options?.count ?? params.nodeCount);
-  const prompt = `Given the parent idea: "${effectiveText}"\nGenerate ${count} concise sub-ideas (${params.phraseLength} chars each). Return as a JSON array of strings.`;
-        let items: string[] = [];
+  const prompt = `Given the parent idea: "${effectiveText}". 
+Return exactly ${count} focused child nodes as a JSON array.
+Each item must be an object with keys:
+- "full": one complete sentence expanding the idea (<= ${params.phraseLength * 10} chars),
+- "phrase": a 2-3 word fragment,
+- "short": a single evocative word or emoji,
+- "emoji": one emoji character,
+- "type": one of "idea", "argument", "counter", "reference", "analogy".
+Respond with valid JSON only.`;
+        let items: GeneratedNodeContent[] = [];
         
         const res = await fetch("/api/generate", {
           method: "POST",
@@ -1118,7 +1198,38 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         
         if (res.ok) {
           const data = await res.json();
-          items = data.items as string[];
+          const rawItems = data.items as unknown;
+          if (Array.isArray(rawItems)) {
+            items = rawItems
+              .map((entry): GeneratedNodeContent | null => {
+                if (entry && typeof entry === "object") {
+                  const obj = entry as Record<string, unknown>;
+                  const full = obj.full ?? obj.text ?? obj.phrase;
+                  if (!full) return null;
+                  return {
+                    full: String(full),
+                    phrase: obj.phrase ? String(obj.phrase) : undefined,
+                    short: obj.short ? String(obj.short) : undefined,
+                    emoji: obj.emoji ? String(obj.emoji) : "",
+                    type: String(obj.type ?? "idea"),
+                  };
+                }
+                if (typeof entry === "string") {
+                  const value = entry.trim();
+                  if (!value) return null;
+                  return {
+                    full: value,
+                    phrase: value,
+                    short: value.split(" ")[0] ?? value,
+                    emoji: "",
+                    type: "idea",
+                  };
+                }
+                return null;
+              })
+              .filter((item): item is GeneratedNodeContent => Boolean(item))
+              .slice(0, count);
+          }
         }
         
         if (!items || items.length === 0) {
@@ -1143,23 +1254,38 @@ export default function Canvas({ params, onRequestInfo }: Props) {
           if (!parent) return prev;
           
           const childIds: string[] = [];
-          items.forEach((text, idx) => {
+          items.forEach((content, idx) => {
             const childId = nextId();
             const finalPosition = positions[idx];
             const parentDepth = getDepthIn(updated, id);
             const childSize = computeSizeByDepth(parentDepth + 1);
             const finalX = finalPosition ? finalPosition.x - childSize / 2 : (nodeData?.x || 0);
             const finalY = finalPosition ? finalPosition.y - childSize / 2 : (nodeData?.y || 0);
+            const full = content.full?.trim() || "Generated idea";
+            const phrase = content.phrase?.trim() || full;
+            const shortLabel =
+              content.short?.trim() ||
+              phrase.split(/\s+/)[0] ||
+              full.slice(0, Math.min(10, full.length));
+            const emojiValue = content.emoji?.trim();
+            const nodeType = content.type?.trim() || "idea";
             
             updated[childId] = {
               id: childId,
-              text,
+              full,
+              phrase,
+              short: shortLabel,
+              emoji: emojiValue,
+              type: nodeType,
+              text: full,
               // 子节点位置应该是中心点减去节点尺寸的一半
               x: finalX,
               y: finalY,
               parentId: id,
               children: [],
               size: childSize,
+              level: parentDepth + 1,
+              dotColor: getNodeColor(nodeType),
             };
             childIds.push(childId);
             childEdges.push([id, childId]);
@@ -1177,7 +1303,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         generatingNodesRef.current.delete(id);
       }
     },
-    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart]
+    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart, computeSizeByDepth, getDepthIn]
   );
 
   const generatingNodesRef = useRef(new Set<string>());
@@ -1198,7 +1324,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
 
   // 旧的回车/ESC 提交预览逻辑移除，交由覆盖层控制
 
-  const recomputeExpandPreview = useCallback((nodeId: string, count: number, tempParentSize?: number) => {
+  const recomputeExpandPreview = useCallback((nodeId: string, count: number) => {
     const parentNode = nodes[nodeId];
     if (!parentNode || parentNode.minimized) return;
     const parentSize = parentNode.size ?? 160;
@@ -1351,7 +1477,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     onGenerate(parent.id, { count: expandOverlay.count, textOverride: newText })
       .catch(() => {})
       .finally(() => hideBanner());
-  }, [expandOverlay, nodes, onGenerate, closeExpandOverlay, showBanner, hideBanner, setNodes]);
+  }, [expandOverlay, nodes, onGenerate, closeExpandOverlay, showBanner, hideBanner, setNodes, getDepthIn, computeSizeByDepth]);
   
   // Add ref to track which nodes are currently generating to prevent double execution
   // 不再使用滑动确认预览，预览在 Expand Overlay 打开时重算
@@ -1607,6 +1733,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
             onClickNode={handleNodeClick}
             onDoubleClickNode={handleNodeDoubleClick}
             onUpdateText={handleUpdateText}
+            distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
           />
         ))}
       </div>

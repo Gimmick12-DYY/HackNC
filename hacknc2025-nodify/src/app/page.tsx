@@ -5,6 +5,7 @@ import Canvas from "@/components/Canvas";
 import Dashboard from "@/components/Dashboard";
 import CompareSection from "@/components/CompareSection";
 import { DashboardParams, InfoData } from "@/components/types";
+import { AttentionProvider } from "@/components/Attention";
 
 export default function Home() {
   const [open, setOpen] = React.useState(true);
@@ -35,7 +36,9 @@ export default function Home() {
 
       <div className="flex-1 flex">
         <main className="flex-1">
-          <Canvas params={params} onRequestInfo={setInfo} />
+          <AttentionProvider>
+            <Canvas params={params} onRequestInfo={setInfo} />
+          </AttentionProvider>
         </main>
         <CompareSection info={info} />
       </div>
