@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { NodeItem } from "./types";
+import { Tooltip } from "@mui/material";
 
 type Props = {
   node: NodeItem;
@@ -158,13 +159,14 @@ export default function NodeCard({
         y: node.y,
       }}
       transition={{
-        type: "spring",
-        stiffness: 300,
-        damping: 25,
-        mass: 0.8,
-        duration: 0.4,
-        x: dragging ? { duration: 0 } : undefined,
-        y: dragging ? { duration: 0 } : undefined,
+        type: dragging ? "tween" : "spring",
+        ease: dragging ? "linear" : undefined,
+        duration: dragging ? 0 : 0.2,
+        stiffness: 220,
+        damping: 26,
+        mass: 0.9,
+        x: { duration: dragging ? 0 : 0.001 },
+        y: { duration: dragging ? 0 : 0.001 },
       }}
     >
       <motion.div
@@ -189,11 +191,12 @@ export default function NodeCard({
           scale: node.minimized ? 0.8 : 1,
         }}
         transition={{
-          type: "spring",
-          stiffness: 400,
-          damping: 30,
-          mass: 0.6,
-          duration: 0.5
+          type: dragging ? "tween" : "spring",
+          ease: dragging ? "linear" : undefined,
+          duration: dragging ? 0 : 0.2,
+          stiffness: 320,
+          damping: 28,
+          mass: 0.6
         }}
         style={{
           boxShadow: node.minimized 
@@ -212,19 +215,20 @@ export default function NodeCard({
         }}
       >
           {node.minimized ? null : (
-            <div
-              className="text-slate-800 text-sm leading-snug text-center px-2"
-              style={{
-                display: '-webkit-box',
-                WebkitBoxOrient: 'vertical' as any,
-                WebkitLineClamp: 3,
-                overflow: 'hidden',
-                wordBreak: 'break-word'
-              }}
-              title={node.text}
-            >
-              {node.text || <span className="opacity-50">Awaiting content…</span>}
-            </div>
+            <Tooltip title={node.text || ""} arrow enterDelay={200}>
+              <div
+                className="text-slate-800 text-sm leading-snug text-center px-2"
+                style={{
+                  display: '-webkit-box',
+                  WebkitBoxOrient: 'vertical' as any,
+                  WebkitLineClamp: 3,
+                  overflow: 'hidden',
+                  wordBreak: 'break-word'
+                }}
+              >
+                {node.text || <span className="opacity-50">Awaiting content…</span>}
+              </div>
+            </Tooltip>
           )}
         </motion.div>
       </motion.div>

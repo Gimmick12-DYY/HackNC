@@ -124,7 +124,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
 
   const nextId = () => `n_${idRef.current++}`;
-  
+
   // Fixed node sizes by hierarchy depth (0=root)
   const NODE_SIZES = [220, 160, 120, 100];
   const computeSizeByDepth = (depth: number) => {
@@ -146,6 +146,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     }
     return depth;
   };
+
+  // No physics loop – keep only direct neighbor positioning during drag
 
   // 屏幕坐标转换为canvas坐标
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
@@ -173,7 +175,6 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     return { x: screenX, y: screenY };
   }, [offsetX, offsetY, scale]);
 
-  // canvas坐标转换为屏幕坐标
   const cancelRootHold = useCallback(() => {
     if (rootHoldTimerRef.current !== null) {
       window.clearTimeout(rootHoldTimerRef.current);
@@ -542,7 +543,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     dfs(rootId);
     return { rootId, nodes: nodesInfo, edges: edgesInfo };
   }, [nodes]);
-
+  
   const handleNodeMenuAction = (action: string, nodeId: string) => {
     const actionKey = `${action}-${nodeId}`;
     
@@ -633,20 +634,50 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       draggingNodesRef.current.add(id);
     }
     
-    // During drag, just update position without constraint - let user drag freely
-    // Constraints will be applied in onMoveEnd
+    // During drag, keep immediate neighbors at near-constant link length analytically
     setNodes((prev) => {
       const node = prev[id];
       if (!node || (node.x === x && node.y === y)) {
         return prev; // No change needed
       }
       
-      return {
-        ...prev,
-        [id]: { ...node, x, y }
-      };
+      const size = node.size ?? 160;
+      const draggedCx = x + size / 2;
+      const draggedCy = y + size / 2;
+      const next: NodeMap = { ...prev, [id]: { ...node, x, y } };
+      const follow = 0.6;
+      const neighbors: string[] = [];
+      for (const [p, c] of edges) {
+        if (p === id) neighbors.push(c);
+        else if (c === id) neighbors.push(p);
+      }
+      for (const nbId of neighbors) {
+        if (draggingNodesRef.current.has(nbId)) continue; // don't move pinned nodes
+        const nb = prev[nbId];
+        if (!nb) continue;
+        const nbSize = nb.size ?? 160;
+        const nbCx = nb.x + nbSize / 2;
+        const nbCy = nb.y + nbSize / 2;
+        let dxv = nbCx - draggedCx;
+        let dyv = nbCy - draggedCy;
+        let dist = Math.hypot(dxv, dyv);
+        if (dist < 1e-4) { dist = 1e-4; dxv = 1e-4; dyv = 0; }
+        const ux = dxv / dist;
+        const uy = dyv / dist;
+        const target = Math.max(120, (size + nbSize) * 0.5 + 80);
+        const targetCx = draggedCx + ux * target;
+        const targetCy = draggedCy + uy * target;
+        const newCx = nbCx + (targetCx - nbCx) * follow;
+        const newCy = nbCy + (targetCy - nbCy) * follow;
+        next[nbId] = { ...nb, x: newCx - nbSize / 2, y: newCy - nbSize / 2 };
+      }
+      return next;
     });
-  }, [previewState.parentId]);
+    // Active dragging pumps energy
+    // Stronger during drag so neighbors follow responsively
+    // but cooling will settle them after release
+    setTimeout(() => { /* microtask to avoid batching override */ }, 0);
+  }, [previewState.parentId, edges]);
 
   const onMoveEnd = useCallback((id: string, x: number, y: number, originalX?: number, originalY?: number) => {
     if (previewState.parentId === id) {
