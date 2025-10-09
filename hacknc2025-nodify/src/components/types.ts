@@ -19,3 +19,17 @@ export type DashboardParams = {
   phraseLength: number; // approximate characters per phrase
   temperature: number; // 0-2
 };
+
+// Aggregated information for a node and its subtree for the right-side info panel
+export type NodeInfoSummary = {
+  id: NodeID;
+  text: string;
+  parentId?: NodeID | null;
+  children: NodeID[];
+};
+
+export type InfoData = {
+  rootId: NodeID;
+  nodes: Record<NodeID, NodeInfoSummary>;
+  edges: Array<[NodeID, NodeID]>; // [parent, child]
+};

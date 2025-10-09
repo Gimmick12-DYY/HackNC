@@ -126,7 +126,7 @@ export default function NodeCard({
 
   const diameter = node.minimized 
     ? 24 // Larger dot size to be more visible
-    : Math.max(120, Math.min(node.size ?? 160, 420));
+    : (node.size ?? 160);
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -212,7 +212,17 @@ export default function NodeCard({
         }}
       >
           {node.minimized ? null : (
-            <div className="text-slate-800 text-sm whitespace-pre-wrap break-words leading-snug text-center px-2">
+            <div
+              className="text-slate-800 text-sm leading-snug text-center px-2"
+              style={{
+                display: '-webkit-box',
+                WebkitBoxOrient: 'vertical' as any,
+                WebkitLineClamp: 3,
+                overflow: 'hidden',
+                wordBreak: 'break-word'
+              }}
+              title={node.text}
+            >
               {node.text || <span className="opacity-50">Awaiting content…</span>}
             </div>
           )}

@@ -4,7 +4,7 @@ import React from "react";
 import Canvas from "@/components/Canvas";
 import Dashboard from "@/components/Dashboard";
 import CompareSection from "@/components/CompareSection";
-import { DashboardParams } from "@/components/types";
+import { DashboardParams, InfoData } from "@/components/types";
 
 export default function Home() {
   const [open, setOpen] = React.useState(true);
@@ -14,6 +14,7 @@ export default function Home() {
     phraseLength: 5,
     temperature: 0.7,
   });
+  const [info, setInfo] = React.useState<InfoData | null>(null);
 
   const generateButtonRef = React.useRef<HTMLButtonElement>(null);
 
@@ -34,9 +35,9 @@ export default function Home() {
 
       <div className="flex-1 flex">
         <main className="flex-1">
-          <Canvas params={params} />
+          <Canvas params={params} onRequestInfo={setInfo} />
         </main>
-        <CompareSection />
+        <CompareSection info={info} />
       </div>
 
       <Dashboard 

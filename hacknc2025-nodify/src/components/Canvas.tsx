@@ -4,14 +4,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import NodeCard from "./Node";
-import { DashboardParams, NodeItem } from "./types";
+import { DashboardParams, NodeItem, InfoData, NodeID } from "./types";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { Button, TextField, Snackbar, Alert } from "@mui/material";
 
 type Props = {
   params: DashboardParams;
+  onRequestInfo?: (info: InfoData) => void;
 };
 
 type NodeMap = Record<string, NodeItem>;
@@ -61,7 +63,7 @@ const PREVIEW_PLACEHOLDER_SIZE = 150;
 const SWIPE_TRIGGER_DISTANCE = 70;
 const SWIPE_ANGLE_TOLERANCE = Math.PI / 5;
 
-export default function Canvas({ params }: Props) {
+export default function Canvas({ params, onRequestInfo }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -122,11 +124,27 @@ export default function Canvas({ params }: Props) {
   const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
 
   const nextId = () => `n_${idRef.current++}`;
-
-  const computeSize = (text: string) => {
-    const len = text.trim().length;
-    const w = 140 + len * 6; // 6px per char heuristic
-    return Math.max(140, Math.min(w, 420));
+  
+  // Fixed node sizes by hierarchy depth (0=root)
+  const NODE_SIZES = [220, 160, 120, 100];
+  const computeSizeByDepth = (depth: number) => {
+    if (depth < 0) return NODE_SIZES[0];
+    if (depth >= NODE_SIZES.length) return NODE_SIZES[NODE_SIZES.length - 1];
+    return NODE_SIZES[depth];
+  };
+  const getDepthIn = (map: NodeMap, nodeId: string): number => {
+    let depth = 0;
+    const visited = new Set<string>();
+    let cur: NodeItem | undefined = map[nodeId];
+    while (cur && cur.parentId) {
+      if (visited.has(cur.id)) break;
+      visited.add(cur.id);
+      const parentNode: NodeItem | undefined = cur.parentId ? map[cur.parentId] : undefined;
+      if (!parentNode) break;
+      depth += 1;
+      cur = parentNode;
+    }
+    return depth;
   };
 
   // 屏幕坐标转换为canvas坐标
@@ -230,7 +248,7 @@ export default function Canvas({ params }: Props) {
     if (!value) return;
 
     if (inputOverlay.mode === "create-root" && inputOverlay.position) {
-      const diameter = computeSize(value);
+      const diameter = computeSizeByDepth(0);
       const x = (inputOverlay.position.x ?? 0) - diameter / 2;
       const y = (inputOverlay.position.y ?? 0) - diameter / 2;
       addNodeAt(x, y, null, value);
@@ -260,6 +278,7 @@ export default function Canvas({ params }: Props) {
     const safeX = x || 200;
     const safeY = y || 200;
     
+    const depth = parentId ? getDepthIn(nodes, parentId) + 1 : 0;
     const node: NodeItem = {
       id,
       x: safeX,
@@ -267,7 +286,7 @@ export default function Canvas({ params }: Props) {
       text,
       parentId: parentId ?? null,
       children: [],
-      size: computeSize(text),
+      size: computeSizeByDepth(depth),
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
     if (parentId) setEdges((e) => [...e, [parentId, id]]);
@@ -430,7 +449,7 @@ export default function Canvas({ params }: Props) {
     
     // Find non-colliding position
     const id = nextId();
-    const nodeSize = computeSize("");
+    const nodeSize = computeSizeByDepth(0);
     
     // 直接使用世界坐标，不做碰撞检测
     const position = { x: worldPos.x, y: worldPos.y };
@@ -503,6 +522,27 @@ export default function Canvas({ params }: Props) {
 
   const executingActionsRef = useRef(new Set<string>());
   
+  const buildInfoData = useCallback((rootId: NodeID): InfoData => {
+    const visited = new Set<NodeID>();
+    const nodesInfo: Record<NodeID, { id: NodeID; text: string; parentId?: NodeID | null; children: NodeID[] }> = {};
+    const edgesInfo: Array<[NodeID, NodeID]> = [];
+
+    const dfs = (id: NodeID) => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const n = nodes[id];
+      if (!n) return;
+      nodesInfo[id] = { id: n.id, text: n.text, parentId: n.parentId ?? null, children: [...n.children] };
+      for (const childId of n.children) {
+        edgesInfo.push([id, childId]);
+        dfs(childId);
+      }
+    };
+
+    dfs(rootId);
+    return { rootId, nodes: nodesInfo, edges: edgesInfo };
+  }, [nodes]);
+
   const handleNodeMenuAction = (action: string, nodeId: string) => {
     const actionKey = `${action}-${nodeId}`;
     
@@ -529,6 +569,18 @@ export default function Canvas({ params }: Props) {
         break;
       case 'delete':
         onDelete?.(nodeId);
+        break;
+      case 'info':
+        setSelectedId(nodeId);
+        try {
+          const info = buildInfoData(nodeId);
+          // Emit to parent to show on the right panel
+          if (typeof (onRequestInfo) === 'function') {
+            onRequestInfo(info);
+          }
+        } catch (e) {
+          // no-op
+        }
         break;
     }
   };
@@ -930,7 +982,8 @@ export default function Canvas({ params }: Props) {
           items.forEach((text, idx) => {
             const childId = nextId();
             const finalPosition = positions[idx];
-            const childSize = computeSize(text);
+            const parentDepth = getDepthIn(updated, id);
+            const childSize = computeSizeByDepth(parentDepth + 1);
             const finalX = finalPosition ? finalPosition.x - childSize / 2 : (nodeData?.x || 0);
             const finalY = finalPosition ? finalPosition.y - childSize / 2 : (nodeData?.y || 0);
             
@@ -984,7 +1037,7 @@ export default function Canvas({ params }: Props) {
   const recomputeExpandPreview = useCallback((nodeId: string, count: number, tempParentSize?: number) => {
     const parentNode = nodes[nodeId];
     if (!parentNode || parentNode.minimized) return;
-    const parentSize = tempParentSize ?? (parentNode.size ?? 160);
+    const parentSize = parentNode.size ?? 160;
     const anchorX = parentNode.x + parentSize / 2;
     const anchorY = parentNode.y + parentSize / 2;
     const targetPositions = arrangeAroundSmart(anchorX, anchorY, Math.max(1, count), nodeId);
@@ -1102,10 +1155,8 @@ export default function Canvas({ params }: Props) {
   // 当 expandOverlay 打开或其配置变化时，实时计算预览
   useEffect(() => {
     if (!expandOverlay.open || !expandOverlay.nodeId) return;
-    const baseText = expandOverlay.text || nodes[expandOverlay.nodeId]?.text || "";
-    const tempSize = computeSize(baseText);
-    recomputeExpandPreview(expandOverlay.nodeId, expandOverlay.count, tempSize);
-  }, [expandOverlay.open, expandOverlay.nodeId, expandOverlay.count, expandOverlay.text, recomputeExpandPreview, nodes]);
+    recomputeExpandPreview(expandOverlay.nodeId, expandOverlay.count);
+  }, [expandOverlay.open, expandOverlay.nodeId, expandOverlay.count, recomputeExpandPreview, nodes]);
 
   // 确认扩展：更新父节点文本与尺寸（保持中心不变），然后生成
   const confirmExpand = useCallback(async () => {
@@ -1118,7 +1169,8 @@ export default function Canvas({ params }: Props) {
     showBanner('Requesting model API in progress...');
 
     const newText = expandOverlay.text;
-    const newSize = computeSize(newText || "");
+    const parentDepth = getDepthIn(nodes, parent.id);
+    const newSize = computeSizeByDepth(parentDepth);
     const oldSize = parent.size ?? 160;
     const centerX = parent.x + oldSize / 2;
     const centerY = parent.y + oldSize / 2;
@@ -1135,7 +1187,7 @@ export default function Canvas({ params }: Props) {
     onGenerate(parent.id, { count: expandOverlay.count, textOverride: newText })
       .catch(() => {})
       .finally(() => hideBanner());
-  }, [expandOverlay, nodes, onGenerate, closeExpandOverlay, showBanner, hideBanner, computeSize, setNodes]);
+  }, [expandOverlay, nodes, onGenerate, closeExpandOverlay, showBanner, hideBanner, setNodes]);
   
   // Add ref to track which nodes are currently generating to prevent double execution
   // 不再使用滑动确认预览，预览在 Expand Overlay 打开时重算
@@ -1431,6 +1483,13 @@ export default function Canvas({ params }: Props) {
               >
                 <AutoAwesomeRoundedIcon fontSize="small" className="text-blue-500" />
                 {nodes[contextMenu.nodeId]?.parentId ? 'Expand Sub-ideas' : 'Expand with AI'}
+              </button>
+              <button
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                onClick={() => handleNodeMenuAction('info', contextMenu.nodeId!)}
+              >
+                <InfoOutlinedIcon fontSize="small" className="text-sky-600" />
+                Get info
               </button>
               <button
                 className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
