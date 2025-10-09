@@ -8,7 +8,7 @@ import { DashboardParams, NodeItem } from "./types";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
-import { Button, TextField } from "@mui/material";
+import { Button, TextField, Snackbar, Alert } from "@mui/material";
 
 type Props = {
   params: DashboardParams;
@@ -37,6 +37,13 @@ type NodePreviewState = {
   anchor: { x: number; y: number } | null;
   holdStartClient: { x: number; y: number } | null;
   pointerClient: { x: number; y: number } | null;
+};
+
+type ExpandOverlayState = {
+  open: boolean;
+  nodeId: string | null;
+  text: string;
+  count: number; // 选择扩展数量
 };
 
 const normalizeAngle = (angle: number) => {
@@ -81,6 +88,20 @@ export default function Canvas({ params }: Props) {
     holdStartClient: null,
     pointerClient: null,
   });
+  const [expandOverlay, setExpandOverlay] = useState<ExpandOverlayState>({
+    open: false,
+    nodeId: null,
+    text: "",
+    count: Math.max(1, params.nodeCount || 3),
+  });
+  const [topBanner, setTopBanner] = useState<{ open: boolean; text: string }>({ open: false, text: "" });
+  const [snack, setSnack] = useState<{ open: boolean; text: string; severity: 'info' | 'warning' | 'error' | 'success' }>({ open: false, text: '', severity: 'info' });
+
+  const showBanner = useCallback((text: string) => setTopBanner({ open: true, text }), []);
+  const hideBanner = useCallback(() => setTopBanner({ open: false, text: '' }), []);
+  const showSnack = useCallback((text: string, severity: 'info' | 'warning' | 'error' | 'success' = 'info') => {
+    setSnack({ open: true, text, severity });
+  }, []);
   
   // 视口状态：缩放和平移
   const [scale, setScale] = useState(1);
@@ -92,6 +113,7 @@ export default function Canvas({ params }: Props) {
   const draggingNodesRef = useRef(new Set<string>());
   const canvasRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(0);
+  const hasInitializedCameraRef = useRef(false);
   const rootHoldTimerRef = useRef<number | null>(null);
   const rootHoldActiveRef = useRef(false);
   const rootHoldStartRef = useRef<{ clientX: number; clientY: number } | null>(null);
@@ -120,6 +142,17 @@ export default function Canvas({ params }: Props) {
     const worldY = (canvasY - offsetY) / scale;
     
     return { x: worldX, y: worldY };
+  }, [offsetX, offsetY, scale]);
+
+  // 世界坐标转换为屏幕坐标（用于将浮层锚定到节点旁）
+  const worldToScreen = useCallback((worldX: number, worldY: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: worldX, y: worldY };
+    const canvasX = worldX * scale + offsetX;
+    const canvasY = worldY * scale + offsetY;
+    const screenX = rect.left + canvasX;
+    const screenY = rect.top + canvasY;
+    return { x: screenX, y: screenY };
   }, [offsetX, offsetY, scale]);
 
   // canvas坐标转换为屏幕坐标
@@ -161,6 +194,34 @@ export default function Canvas({ params }: Props) {
     }
     nodeHoldInfoRef.current = null;
   }, []);
+
+  const closeExpandOverlay = useCallback(() => {
+    setExpandOverlay((prev) => ({ ...prev, open: false, nodeId: null }));
+    setPreviewState({
+      parentId: null,
+      placeholders: [],
+      anchor: null,
+      holdStartClient: null,
+      pointerClient: null,
+    });
+  }, []);
+
+  const openExpandOverlay = useCallback((nodeId: string) => {
+    // 若已有生成任务在进行中，阻止再次打开并提示
+    if (generatingNodesRef.current.size > 0) {
+      showSnack('上一个请求还在执行中', 'warning');
+      return;
+    }
+    const n = nodes[nodeId];
+    if (!n) return;
+    setSelectedId(nodeId);
+    setExpandOverlay({
+      open: true,
+      nodeId,
+      text: n.text || "",
+      count: Math.max(1, params.nodeCount || 3),
+    });
+  }, [nodes, params.nodeCount, showSnack]);
 
   const handleInputOverlaySubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -406,6 +467,11 @@ export default function Canvas({ params }: Props) {
     const startOffsetX = offsetX;
     const startOffsetY = offsetY;
     const duration = 500; // 动画持续时间（毫秒）
+    // 目标：将世界坐标 (0,0) 放到视口中心，缩放为 1
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const targetScale = 1;
+    const targetOffsetX = rect ? rect.width / 2 : 0;
+    const targetOffsetY = rect ? rect.height / 2 : 0;
     const startTime = Date.now();
     
     const animate = () => {
@@ -415,9 +481,9 @@ export default function Canvas({ params }: Props) {
       // 使用easeOutCubic缓动函数
       const easeProgress = 1 - Math.pow(1 - progress, 3);
       
-      const newScale = startScale + (1 - startScale) * easeProgress;
-      const newOffsetX = startOffsetX + (0 - startOffsetX) * easeProgress;
-      const newOffsetY = startOffsetY + (0 - startOffsetY) * easeProgress;
+      const newScale = startScale + (targetScale - startScale) * easeProgress;
+      const newOffsetX = startOffsetX + (targetOffsetX - startOffsetX) * easeProgress;
+      const newOffsetY = startOffsetY + (targetOffsetY - startOffsetY) * easeProgress;
       
       // 批量更新状态
       setScale(newScale);
@@ -456,8 +522,7 @@ export default function Canvas({ params }: Props) {
     switch (action) {
       case 'expand':
         console.log('Expand action triggered for node:', nodeId);
-        // Directly call the functions - they are stable due to useCallback
-        onGenerate(nodeId);
+        openExpandOverlay(nodeId);
         break;
       case 'minimize':
         onMinimize?.(nodeId);
@@ -792,7 +857,7 @@ export default function Canvas({ params }: Props) {
 
 
   const onGenerate = useCallback(
-    async (id: string) => {
+    async (id: string, options?: { count?: number; textOverride?: string }) => {
       console.log('onGenerate function called with id:', id);
       // Prevent double generation for the same node
       if (generatingNodesRef.current.has(id)) {
@@ -813,13 +878,15 @@ export default function Canvas({ params }: Props) {
         });
       });
       
-      if (!nodeData || !nodeData.text.trim()) {
+      const effectiveText = (options?.textOverride ?? nodeData?.text ?? "").trim();
+      if (!nodeData || !effectiveText) {
         generatingNodesRef.current.delete(id);
         return;
       }
       
       try {
-        const prompt = `Given the parent idea: "${nodeData.text.trim()}"\nGenerate ${params.nodeCount} concise sub-ideas (${params.phraseLength} chars each). Return as a JSON array of strings.`;
+  const count = Math.max(1, options?.count ?? params.nodeCount);
+  const prompt = `Given the parent idea: "${effectiveText}"\nGenerate ${count} concise sub-ideas (${params.phraseLength} chars each). Return as a JSON array of strings.`;
         let items: string[] = [];
         
         const res = await fetch("/api/generate", {
@@ -827,7 +894,7 @@ export default function Canvas({ params }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt,
-            count: params.nodeCount,
+            count,
             phraseLength: params.phraseLength,
             temperature: params.temperature,
           }),
@@ -847,8 +914,9 @@ export default function Canvas({ params }: Props) {
         
         // Calculate smart positions for child nodes
         // 使用父节点的中心点作为起始坐标
-        const parentCenterX = nodeData.x + (nodeData.size || 160) / 2;
-        const parentCenterY = nodeData.y + (nodeData.size || 160) / 2;
+  const parentSizeForPlacement = nodeData.size || 160;
+  const parentCenterX = nodeData.x + parentSizeForPlacement / 2;
+  const parentCenterY = nodeData.y + parentSizeForPlacement / 2;
         
         const positions = arrangeAroundSmart(parentCenterX, parentCenterY, items.length, id);
         
@@ -897,17 +965,7 @@ export default function Canvas({ params }: Props) {
 
   const generatingNodesRef = useRef(new Set<string>());
 
-  const commitPreview = useCallback(
-    (nodeId: string) => {
-      if (generatingNodesRef.current.has(nodeId)) {
-        return;
-      }
-      clearPreview();
-      cancelNodeHold();
-      onGenerate(nodeId);
-    },
-    [clearPreview, cancelNodeHold, onGenerate]
-  );
+  // 预览提交由 Expand Overlay 的 Confirm 触发
 
   useEffect(() => {
     if (!inputOverlay.open) return;
@@ -921,24 +979,33 @@ export default function Canvas({ params }: Props) {
     return () => window.removeEventListener("keydown", handleKeydown);
   }, [inputOverlay.open, closeInputOverlay]);
 
-  useEffect(() => {
-    if (!previewState.parentId) return;
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        if (previewState.parentId) {
-          commitPreview(previewState.parentId);
-        }
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cancelNodeHold();
-        clearPreview();
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [previewState.parentId, commitPreview, cancelNodeHold, clearPreview]);
+  // 旧的回车/ESC 提交预览逻辑移除，交由覆盖层控制
+
+  const recomputeExpandPreview = useCallback((nodeId: string, count: number, tempParentSize?: number) => {
+    const parentNode = nodes[nodeId];
+    if (!parentNode || parentNode.minimized) return;
+    const parentSize = tempParentSize ?? (parentNode.size ?? 160);
+    const anchorX = parentNode.x + parentSize / 2;
+    const anchorY = parentNode.y + parentSize / 2;
+    const targetPositions = arrangeAroundSmart(anchorX, anchorY, Math.max(1, count), nodeId);
+    const placeholders = targetPositions.map((center, index) => {
+      const size = Math.max(120, Math.min(PREVIEW_PLACEHOLDER_SIZE, parentSize + 10));
+      return {
+        id: `${nodeId}-preview-${index}`,
+        x: center.x - size / 2,
+        y: center.y - size / 2,
+        angle: Math.atan2(center.y - anchorY, center.x - anchorX),
+        size,
+      } as PreviewPlaceholder;
+    });
+    setPreviewState({
+      parentId: nodeId,
+      placeholders,
+      anchor: { x: anchorX, y: anchorY },
+      holdStartClient: null,
+      pointerClient: null,
+    });
+  }, [nodes, arrangeAroundSmart]);
 
 
 
@@ -1020,76 +1087,73 @@ export default function Canvas({ params }: Props) {
     };
   }, []);
 
+  // 初始化：将世界坐标 (0,0) 放在视口中心
+  useEffect(() => {
+    if (hasInitializedCameraRef.current) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      setScale(1);
+      setOffsetX(rect.width / 2);
+      setOffsetY(rect.height / 2);
+    }
+    hasInitializedCameraRef.current = true;
+  }, []);
+
+  // 当 expandOverlay 打开或其配置变化时，实时计算预览
+  useEffect(() => {
+    if (!expandOverlay.open || !expandOverlay.nodeId) return;
+    const baseText = expandOverlay.text || nodes[expandOverlay.nodeId]?.text || "";
+    const tempSize = computeSize(baseText);
+    recomputeExpandPreview(expandOverlay.nodeId, expandOverlay.count, tempSize);
+  }, [expandOverlay.open, expandOverlay.nodeId, expandOverlay.count, expandOverlay.text, recomputeExpandPreview, nodes]);
+
+  // 确认扩展：更新父节点文本与尺寸（保持中心不变），然后生成
+  const confirmExpand = useCallback(async () => {
+    if (!expandOverlay.open || !expandOverlay.nodeId) return;
+    const parent = nodes[expandOverlay.nodeId];
+    if (!parent) return;
+
+    // 先关闭面板，给用户立即反馈
+    closeExpandOverlay();
+    showBanner('Requesting model API in progress...');
+
+    const newText = expandOverlay.text;
+    const newSize = computeSize(newText || "");
+    const oldSize = parent.size ?? 160;
+    const centerX = parent.x + oldSize / 2;
+    const centerY = parent.y + oldSize / 2;
+    const newX = centerX - newSize / 2;
+    const newY = centerY - newSize / 2;
+
+    // 立即更新父节点文本与尺寸（不等待生成）
+    setNodes((prev) => ({
+      ...prev,
+      [parent.id]: { ...prev[parent.id], text: newText, size: newSize, x: newX, y: newY },
+    }));
+
+    // 后台执行生成，结束后隐藏横幅
+    onGenerate(parent.id, { count: expandOverlay.count, textOverride: newText })
+      .catch(() => {})
+      .finally(() => hideBanner());
+  }, [expandOverlay, nodes, onGenerate, closeExpandOverlay, showBanner, hideBanner, computeSize, setNodes]);
   
   // Add ref to track which nodes are currently generating to prevent double execution
-  const openPreviewForNode = useCallback(
-    (nodeId: string, holdStart: { x: number; y: number } | null) => {
-      if (params.nodeCount <= 0) {
-        return;
-      }
-      const parentNode = nodes[nodeId];
-      if (!parentNode || parentNode.minimized) {
-        return;
-      }
-
-      const parentSize = parentNode.size ?? 160;
-      const anchorX = parentNode.x + parentSize / 2;
-      const anchorY = parentNode.y + parentSize / 2;
-
-      const targetPositions = arrangeAroundSmart(anchorX, anchorY, params.nodeCount, nodeId);
-      if (!targetPositions.length) {
-        setPreviewState({
-          parentId: nodeId,
-          placeholders: [],
-          anchor: { x: anchorX, y: anchorY },
-          holdStartClient: holdStart,
-          pointerClient: holdStart,
-        });
-        return;
-      }
-
-      const placeholders = targetPositions.map((center, index) => {
-        const size = Math.max(120, Math.min(PREVIEW_PLACEHOLDER_SIZE, parentSize + 10));
-        return {
-          id: `${nodeId}-preview-${index}`,
-          x: center.x - size / 2,
-          y: center.y - size / 2,
-          angle: Math.atan2(center.y - anchorY, center.x - anchorX),
-          size,
-        } satisfies PreviewPlaceholder;
-      });
-
-      setPreviewState({
-        parentId: nodeId,
-        placeholders,
-        anchor: { x: anchorX, y: anchorY },
-        holdStartClient: holdStart,
-        pointerClient: holdStart,
-      });
-      setSelectedId(nodeId);
-    },
-    [nodes, params.nodeCount, arrangeAroundSmart]
-  );
+  // 不再使用滑动确认预览，预览在 Expand Overlay 打开时重算
 
   const handleNodeHoldStart = useCallback(
-    ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
+    ({ nodeId }: { nodeId: string; clientX: number; clientY: number }) => {
       if (inputOverlay.open) return;
       cancelNodeHold();
       clearPreview();
-      const startCanvas = screenToCanvas(clientX, clientY);
-      nodeHoldInfoRef.current = {
-        nodeId,
-        startClient: { x: clientX, y: clientY },
-        startCanvas,
-      };
+      nodeHoldInfoRef.current = { nodeId, startClient: { x: 0, y: 0 }, startCanvas: { x: 0, y: 0 } };
       nodeHoldTimerRef.current = window.setTimeout(() => {
         nodeHoldTimerRef.current = null;
         const info = nodeHoldInfoRef.current;
         if (!info || info.nodeId !== nodeId) return;
-        openPreviewForNode(nodeId, info.startClient);
+        openExpandOverlay(nodeId);
       }, HOLD_DURATION_MS);
     },
-    [cancelNodeHold, clearPreview, openPreviewForNode, inputOverlay.open, screenToCanvas]
+    [cancelNodeHold, clearPreview, openExpandOverlay, inputOverlay.open]
   );
 
   const handleNodeHoldMove = ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
@@ -1116,35 +1180,13 @@ export default function Canvas({ params }: Props) {
 
   
   const handleNodeHoldEnd = useCallback(
-    ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
-      if (previewState.parentId === nodeId && previewState.anchor) {
-        const releaseCanvas = screenToCanvas(clientX, clientY);
-        const dx = releaseCanvas.x - previewState.anchor.x;
-        const dy = releaseCanvas.y - previewState.anchor.y;
-        const distance = Math.hypot(dx, dy);
-
-        if (distance >= SWIPE_TRIGGER_DISTANCE) {
-          const swipeAngle = Math.atan2(dy, dx);
-          const matched = previewState.placeholders.some((placeholder) => {
-            const diff = Math.abs(normalizeAngle(swipeAngle - placeholder.angle));
-            return diff <= SWIPE_ANGLE_TOLERANCE;
-          });
-
-          if (matched) {
-            commitPreview(nodeId);
-            return;
-          }
-        }
-      }
-
+    ({ nodeId }: { nodeId: string; clientX: number; clientY: number }) => {
       if (nodeHoldInfoRef.current?.nodeId === nodeId) {
         cancelNodeHold();
       }
-      if (previewState.parentId === nodeId) {
-        clearPreview();
-      }
+      // 预览由覆盖层管理
     },
-    [previewState, screenToCanvas, commitPreview, cancelNodeHold, clearPreview]
+    [cancelNodeHold]
   );
 
   const lines = useMemo(() => {
@@ -1350,7 +1392,7 @@ export default function Canvas({ params }: Props) {
         ))}
       </div>
 
-      {previewState.parentId && (
+      { (previewState.parentId) && (
         <div className="pointer-events-none absolute inset-0 bg-slate-950/12 transition-opacity duration-150" />
       )}
 
@@ -1450,8 +1492,89 @@ export default function Canvas({ params }: Props) {
         document.body
       )}
 
+      {expandOverlay.open && expandOverlay.nodeId && typeof document !== "undefined" && (() => {
+        const node = nodes[expandOverlay.nodeId!];
+        if (!node) return null;
+        const size = node.size ?? 160;
+        // 面板锚点：节点右侧中点，向右偏移 12px
+        const rightWorldX = node.x + size + 12;
+        const centerWorldY = node.y + size / 2;
+        const pt = worldToScreen(rightWorldX, centerWorldY);
+        // 视口边界保护（估算面板尺寸）
+        const approxWidth = 320;
+        const approxHeight = 160;
+        const padding = 8;
+        let left = pt.x;
+        let top = pt.y - approxHeight / 2;
+        if (left + approxWidth + padding > window.innerWidth) {
+          // 如果右侧放不下，放到节点左侧
+          const leftWorldX = node.x - 12;
+          const leftPt = worldToScreen(leftWorldX, centerWorldY);
+          left = Math.max(padding, leftPt.x - approxWidth);
+        }
+        if (top + approxHeight + padding > window.innerHeight) {
+          top = window.innerHeight - approxHeight - padding;
+        }
+        if (top < padding) top = padding;
+
+        return createPortal(
+          <div className="fixed z-[75]" style={{ left, top, width: approxWidth }}>
+            <div className="rounded-xl bg-white shadow-xl border border-slate-200 p-4 space-y-3">
+              <div className="text-sm font-medium text-slate-900">Expand with AI</div>
+              <TextField
+                multiline
+                minRows={2}
+                label="Node text"
+                value={expandOverlay.text}
+                onChange={(e) => setExpandOverlay((prev) => ({ ...prev, text: e.target.value }))}
+                fullWidth
+              />
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-slate-600">Count</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={expandOverlay.count}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value || '1', 10);
+                    setExpandOverlay((prev) => ({ ...prev, count: Math.min(12, Math.max(1, isNaN(v) ? 1 : v)) }));
+                  }}
+                  className="w-20 border rounded px-2 py-1"
+                />
+                <div className="flex-1" />
+                <Button size="small" variant="text" onClick={closeExpandOverlay}>Cancel</Button>
+                <Button size="small" variant="contained" disableElevation onClick={confirmExpand}>Confirm</Button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
+
+      {/* 顶部横幅提示 */}
+      {topBanner.open && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[80]">
+          <div className="bg-slate-900 text-white text-sm px-4 py-2 rounded-full shadow-lg">
+            {topBanner.text}
+          </div>
+        </div>
+      )}
+
+      {/* Snackbar 提示（重复请求等） */}
+      <Snackbar
+        open={snack.open}
+        autoHideDuration={2000}
+        onClose={() => setSnack((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity={snack.severity} sx={{ width: '100%' }} onClose={() => setSnack((s) => ({ ...s, open: false }))}>
+          {snack.text}
+        </Alert>
+      </Snackbar>
+
       <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-slate-500 text-sm bg-white/70 backdrop-blur rounded-full px-3 py-1 shadow select-none" style={{ caretColor: 'transparent' }}>
-        Hold canvas 0.5s to seed an idea • Hold + swipe a node or press Enter to branch • Scroll to zoom • Middle-click drag to pan • Right-click for tools
+        Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Right-click for tools
       </div>
     </div>
   );
