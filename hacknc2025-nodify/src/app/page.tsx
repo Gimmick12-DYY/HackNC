@@ -8,7 +8,7 @@ import { DashboardParams, InfoData } from "@/components/types";
 import { AttentionProvider } from "@/components/Attention";
 
 export default function Home() {
-  const [open, setOpen] = React.useState(true);
+  const [open, setOpen] = React.useState(false);
   const [dashboardHovered, setDashboardHovered] = React.useState(false);
   const [params, setParams] = React.useState<DashboardParams>({
     nodeCount: 4,

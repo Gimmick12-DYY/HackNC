@@ -1,9 +1,8 @@
 "use client";
 
 import React from "react";
-import { Drawer, IconButton, Slider, TextField, Typography, Box } from "@mui/material";
+import { Slider } from "@mui/material";
 import DashboardRoundedIcon from "@mui/icons-material/DashboardRounded";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import { DashboardParams } from "./types";
 
 type Props = {
@@ -51,56 +50,82 @@ export default function Dashboard({ open, onToggle, params, onChange, onHover }:
         )}
       </button>
 
-      <Drawer anchor="right" open={open} onClose={onToggle}>
-        <Box sx={{ width: 340, p: 3 }} role="presentation">
-          <div className="flex items-center justify-between mb-2">
-            <Typography variant="h6">Dashboard</Typography>
-            <IconButton onClick={onToggle}>
-              <CloseRoundedIcon />
-            </IconButton>
-          </div>
-          <Typography variant="body2" color="text.secondary" className="mb-4">
-            Control how many subnodes get generated and their style.
-          </Typography>
-
-          <div className="space-y-6">
-            <div>
-              <Typography gutterBottom>Node count: {params.nodeCount}</Typography>
+      {open && (
+        <div className="fixed bottom-24 right-6 flex flex-col items-end gap-5 z-40">
+          <div className="flex flex-row-reverse items-center gap-3">
+            <button
+              type="button"
+              className="w-14 h-14 rounded-full bg-slate-800 text-white text-xl flex items-center justify-center shadow-lg"
+              aria-hidden
+              tabIndex={-1}
+            >
+              🧮
+            </button>
+            <div className="bg-white rounded-2xl shadow-xl px-4 py-3 w-60 border border-slate-200">
+              <div className="flex items-center justify-between text-sm font-medium text-slate-700 mb-2">
+                <span>Node Count</span>
+                <span className="text-slate-500">{params.nodeCount}</span>
+              </div>
               <Slider
                 value={params.nodeCount}
                 onChange={(_, v) => onChange({ ...params, nodeCount: v as number })}
                 min={1}
                 max={10}
                 step={1}
+                size="small"
               />
             </div>
-
-            <div>
-              <Typography gutterBottom>
-                Approx. phrase length: {params.phraseLength}
-              </Typography>
+          </div>
+          <div className="flex flex-row-reverse items-center gap-3">
+            <button
+              type="button"
+              className="w-14 h-14 rounded-full bg-slate-800 text-white text-xl flex items-center justify-center shadow-lg"
+              aria-hidden
+              tabIndex={-1}
+            >
+              🔡
+            </button>
+            <div className="bg-white rounded-2xl shadow-xl px-4 py-3 w-60 border border-slate-200">
+              <div className="flex items-center justify-between text-sm font-medium text-slate-700 mb-2">
+                <span>Phrase Length</span>
+                <span className="text-slate-500">{params.phraseLength}</span>
+              </div>
               <Slider
                 value={params.phraseLength}
                 onChange={(_, v) => onChange({ ...params, phraseLength: v as number })}
                 min={1}
                 max={10}
                 step={1}
+                size="small"
               />
             </div>
-
-            <div>
-              <Typography gutterBottom>Temperature: {params.temperature.toFixed(2)}</Typography>
+          </div>
+          <div className="flex flex-row-reverse items-center gap-3">
+            <button
+              type="button"
+              className="w-14 h-14 rounded-full bg-slate-800 text-white text-xl flex items-center justify-center shadow-lg"
+              aria-hidden
+              tabIndex={-1}
+            >
+              🔥
+            </button>
+            <div className="bg-white rounded-2xl shadow-xl px-4 py-3 w-60 border border-slate-200">
+              <div className="flex items-center justify-between text-sm font-medium text-slate-700 mb-2">
+                <span>Temperature</span>
+                <span className="text-slate-500">{params.temperature.toFixed(2)}</span>
+              </div>
               <Slider
                 value={params.temperature}
                 onChange={(_, v) => onChange({ ...params, temperature: v as number })}
                 min={0}
                 max={2}
                 step={0.05}
+                size="small"
               />
             </div>
           </div>
-        </Box>
-      </Drawer>
+        </div>
+      )}
     </>
   );
 }
