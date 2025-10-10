@@ -98,16 +98,6 @@ export default function Dashboard({ open, onToggle, params, onChange, onHover }:
                 step={0.05}
               />
             </div>
-
-            <TextField
-              size="small"
-              label="OpenRouter API Key"
-              placeholder="Use env var on server"
-              value={""}
-              disabled
-              helperText="Set OPENROUTER_API_KEY in your environment"
-              fullWidth
-            />
           </div>
         </Box>
       </Drawer>

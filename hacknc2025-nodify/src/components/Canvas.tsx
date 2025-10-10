@@ -9,7 +9,7 @@ import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import { Button, Snackbar, Alert, TextField } from "@mui/material";
+import { Button, Snackbar, Alert } from "@mui/material";
 import { useAttention } from "./Attention";
 import { getNodeColor } from "@/utils/getNodeColor";
 
@@ -55,6 +55,7 @@ const HOLD_DURATION_MS = 500;
 const ROOT_HOLD_MOVE_THRESHOLD = 18;
 const NODE_HOLD_MOVE_THRESHOLD = 24;
 const PREVIEW_PLACEHOLDER_SIZE = 150;
+const MAX_GENERATED_COUNT = 12;
 
 export default function Canvas({ params, onRequestInfo }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
@@ -92,6 +93,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     text: "",
     count: Math.max(1, params.nodeCount || 3),
   });
+  const [expandSliderVisible, setExpandSliderVisible] = useState(false);
   const [topBanner, setTopBanner] = useState<{ open: boolean; text: string }>({ open: false, text: "" });
   const [snack, setSnack] = useState<{ open: boolean; text: string; severity: 'info' | 'warning' | 'error' | 'success' }>({ open: false, text: '', severity: 'info' });
 
@@ -126,6 +128,9 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const rootHoldWorldRef = useRef<{ x: number; y: number } | null>(null);
   const nodeHoldTimerRef = useRef<number | null>(null);
   const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
+  const expandMenuRef = useRef<HTMLDivElement | null>(null);
+  const expandSliderRef = useRef<HTMLDivElement | null>(null);
+  const expandMenuPointerRef = useRef<{ active: boolean; sliderVisible: boolean; startX: number; source: "menu" | "slider" | null }>({ active: false, sliderVisible: false, startX: 0, source: null });
   // 组拖拽：记录起点和各节点原始位置
   const groupDragStartRef = useRef<{ anchorId: string | null; origin: Map<string, { x: number; y: number }> }>({ anchorId: null, origin: new Map() });
 
@@ -288,13 +293,16 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       holdStartClient: null,
       pointerClient: null,
     });
-  setSelectedIds(new Set([nodeId]));
+    setSelectedIds(new Set([nodeId]));
+    const initialCount = Math.min(MAX_GENERATED_COUNT, Math.max(1, params.nodeCount || 3));
     setExpandOverlay({
       open: true,
       nodeId,
       text: n.full || n.text || "",
-      count: Math.max(1, params.nodeCount || 3),
+      count: initialCount,
     });
+    setExpandSliderVisible(false);
+    expandMenuPointerRef.current = { active: false, sliderVisible: false, startX: 0, source: null };
   }, [nodes, params.nodeCount, showSnack]);
 
   const handleInputOverlaySubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -396,46 +404,56 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     }
 
     if (e.button === 0) {
-      const hasNodes = Object.keys(nodes).length > 0;
-      if (!hasNodes && !inputOverlay.open) {
-        if (rootHoldTimerRef.current !== null) {
-          window.clearTimeout(rootHoldTimerRef.current);
+      const target = e.target as HTMLElement;
+      const isOnNode = Boolean(target.closest('.node-card'));
+
+      if (!isOnNode) {
+        if (!inputOverlay.open) {
+          if (rootHoldTimerRef.current !== null) {
+            window.clearTimeout(rootHoldTimerRef.current);
+          }
+          const initialClientX = e.clientX;
+          const initialClientY = e.clientY;
+          rootHoldActiveRef.current = true;
+          rootHoldStartRef.current = { clientX: initialClientX, clientY: initialClientY };
+          rootHoldWorldRef.current = screenToCanvas(initialClientX, initialClientY);
+          rootHoldTimerRef.current = window.setTimeout(() => {
+            rootHoldTimerRef.current = null;
+            if (!rootHoldActiveRef.current) return;
+            const position = rootHoldWorldRef.current ?? screenToCanvas(initialClientX, initialClientY);
+            setInputOverlay({
+              open: true,
+              mode: "create-root",
+              position,
+              targetNodeId: null,
+            });
+            setInputOverlayValue("");
+            setSelectionRect({ active: false, start: null, current: null });
+            rootHoldActiveRef.current = false;
+          }, HOLD_DURATION_MS);
         }
-        rootHoldActiveRef.current = true;
-        rootHoldStartRef.current = { clientX: e.clientX, clientY: e.clientY };
-        rootHoldWorldRef.current = screenToCanvas(e.clientX, e.clientY);
-        rootHoldTimerRef.current = window.setTimeout(() => {
-          rootHoldTimerRef.current = null;
-          if (!rootHoldActiveRef.current) return;
-          const position = rootHoldWorldRef.current ?? screenToCanvas(e.clientX, e.clientY);
-          setInputOverlay({
-            open: true,
-            mode: "create-root",
-            position,
-            targetNodeId: null,
-          });
-          setInputOverlayValue("");
-          rootHoldActiveRef.current = false;
-        }, HOLD_DURATION_MS);
+        setSelectionRect({
+          active: false,
+          start: { x: e.clientX, y: e.clientY },
+          current: { x: e.clientX, y: e.clientY },
+        });
+        setContextMenu(null);
+        setSelectedIds(new Set());
+        suppressNextCanvasClickRef.current = false;
       } else {
-        // 在空白区域左键按下开始框选
-        const target = e.target as HTMLElement;
-        if (!target.closest('.node-card')) {
-          setSelectionRect({ active: true, start: { x: e.clientX, y: e.clientY }, current: { x: e.clientX, y: e.clientY } });
-          setContextMenu(null);
-          setSelectedIds(new Set());
-          suppressNextCanvasClickRef.current = true;
-        }
+        cancelRootHold();
       }
     }
   };
 
   const onCanvasMouseMove = (e: React.MouseEvent) => {
+    let activateSelection = false;
     if (rootHoldActiveRef.current && rootHoldStartRef.current) {
       const dx = e.clientX - rootHoldStartRef.current.clientX;
       const dy = e.clientY - rootHoldStartRef.current.clientY;
       if (Math.hypot(dx, dy) > ROOT_HOLD_MOVE_THRESHOLD) {
         cancelRootHold();
+        activateSelection = true;
       }
     }
 
@@ -443,8 +461,20 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       setOffsetX(e.clientX - panStart.x);
       setOffsetY(e.clientY - panStart.y);
     }
-    if (selectionRect.active && selectionRect.start) {
-      setSelectionRect((prev) => ({ ...prev, current: { x: e.clientX, y: e.clientY } }));
+
+    if (selectionRect.start) {
+      setSelectionRect((prev) => {
+        if (!prev.start) return prev;
+        const next = {
+          ...prev,
+          current: { x: e.clientX, y: e.clientY },
+        };
+        if (activateSelection && !prev.active) {
+          suppressNextCanvasClickRef.current = true;
+          next.active = true;
+        }
+        return next;
+      });
     }
   };
 
@@ -1478,6 +1508,111 @@ Respond with valid JSON only.`;
       .catch(() => {})
       .finally(() => hideBanner());
   }, [expandOverlay, nodes, onGenerate, closeExpandOverlay, showBanner, hideBanner, setNodes, getDepthIn, computeSizeByDepth]);
+
+  useEffect(() => {
+    if (!expandOverlay.open) {
+      setExpandSliderVisible(false);
+      expandMenuPointerRef.current = { active: false, sliderVisible: false, startX: 0, source: null };
+      return;
+    }
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      if (!expandMenuRef.current) return;
+      if (expandMenuRef.current.contains(event.target as Node)) return;
+      closeExpandOverlay();
+    };
+    window.addEventListener('pointerdown', handleOutsidePointerDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+    };
+  }, [expandOverlay.open, closeExpandOverlay]);
+
+  const updateExpandCountFromClientX = useCallback((clientX: number) => {
+    const slider = expandSliderRef.current;
+    if (!slider) return;
+    const rect = slider.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const clamped = Math.min(Math.max(clientX, rect.left), rect.right);
+    const ratio = rect.width === 0 ? 0 : (clamped - rect.left) / rect.width;
+    const raw = 1 + ratio * (MAX_GENERATED_COUNT - 1);
+    const next = Math.round(raw);
+    setExpandOverlay((prev) => {
+      if (!prev.open) return prev;
+      const constrained = Math.min(MAX_GENERATED_COUNT, Math.max(1, next));
+      if (constrained === prev.count) return prev;
+      return { ...prev, count: constrained };
+    });
+  }, []);
+
+  const handleExpandMenuPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    expandMenuPointerRef.current = {
+      active: true,
+      sliderVisible: expandSliderVisible,
+      startX: event.clientX,
+      source: "menu",
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [expandSliderVisible]);
+
+  const handleExpandMenuPointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!expandMenuPointerRef.current.active || expandMenuPointerRef.current.source !== "menu") return;
+    const deltaX = event.clientX - expandMenuPointerRef.current.startX;
+    if (!expandMenuPointerRef.current.sliderVisible && deltaX > 24) {
+      expandMenuPointerRef.current.sliderVisible = true;
+      setExpandSliderVisible(true);
+    }
+    if (expandMenuPointerRef.current.sliderVisible) {
+      updateExpandCountFromClientX(event.clientX);
+    }
+  }, [updateExpandCountFromClientX]);
+
+  const handleExpandMenuPointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!expandMenuPointerRef.current.active || expandMenuPointerRef.current.source !== "menu") return;
+    event.preventDefault();
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      /* ignore */
+    }
+    expandMenuPointerRef.current = { active: false, sliderVisible: false, startX: 0, source: null };
+    confirmExpand();
+  }, [confirmExpand]);
+
+  const handleExpandMenuPointerCancel = useCallback(() => {
+    expandMenuPointerRef.current = { active: false, sliderVisible: false, startX: 0, source: null };
+  }, []);
+
+  const handleSliderPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    expandMenuPointerRef.current = {
+      active: true,
+      sliderVisible: true,
+      startX: event.clientX,
+      source: "slider",
+    };
+    setExpandSliderVisible(true);
+    updateExpandCountFromClientX(event.clientX);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [updateExpandCountFromClientX]);
+
+  const handleSliderPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!expandMenuPointerRef.current.active) return;
+    event.preventDefault();
+    updateExpandCountFromClientX(event.clientX);
+  }, [updateExpandCountFromClientX]);
+
+  const handleSliderPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!expandMenuPointerRef.current.active) return;
+    event.preventDefault();
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      /* ignore */
+    }
+    expandMenuPointerRef.current = { active: false, sliderVisible: true, startX: 0, source: null };
+  }, []);
   
   // Add ref to track which nodes are currently generating to prevent double execution
   // 不再使用滑动确认预览，预览在 Expand Overlay 打开时重算
@@ -1860,8 +1995,8 @@ Respond with valid JSON only.`;
         const centerWorldY = node.y + size / 2;
         const pt = worldToScreen(rightWorldX, centerWorldY);
         // 视口边界保护（估算面板尺寸）
-        const approxWidth = 320;
-        const approxHeight = 160;
+        const approxWidth = expandSliderVisible ? 360 : 240;
+        const approxHeight = expandOverlay.text ? 150 : 120;
         const padding = 8;
         let left = pt.x;
         let top = pt.y - approxHeight / 2;
@@ -1875,36 +2010,78 @@ Respond with valid JSON only.`;
           top = window.innerHeight - approxHeight - padding;
         }
         if (top < padding) top = padding;
+        const sliderPercent = MAX_GENERATED_COUNT > 1
+          ? ((expandOverlay.count - 1) / (MAX_GENERATED_COUNT - 1)) * 100
+          : 0;
 
         return createPortal(
-          <div className="fixed z-[75]" style={{ left, top, width: approxWidth }}>
-            <div className="rounded-xl bg-white shadow-xl border border-slate-200 p-4 space-y-3">
-              <div className="text-sm font-medium text-slate-900">Expand with AI</div>
-              <TextField
-                multiline
-                minRows={2}
-                label="Node text"
-                value={expandOverlay.text}
-                onChange={(e) => setExpandOverlay((prev) => ({ ...prev, text: e.target.value }))}
-                fullWidth
-              />
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-slate-600">Count</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={12}
-                  value={expandOverlay.count}
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value || '1', 10);
-                    setExpandOverlay((prev) => ({ ...prev, count: Math.min(12, Math.max(1, isNaN(v) ? 1 : v)) }));
-                  }}
-                  className="w-20 border rounded px-2 py-1"
-                />
-                <div className="flex-1" />
-                <Button size="small" variant="text" onClick={closeExpandOverlay}>Cancel</Button>
-                <Button size="small" variant="contained" disableElevation onClick={confirmExpand}>Confirm</Button>
+          <div className="fixed z-[75]" style={{ left, top }}>
+            <div
+              ref={expandMenuRef}
+              className="pointer-events-auto relative flex w-56 flex-col overflow-visible rounded-lg border border-white/15 bg-slate-900/95 text-white shadow-xl backdrop-blur-sm"
+            >
+              <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-white/40">
+                Expand with AI
               </div>
+              <button
+                type="button"
+                className="relative flex w-full items-center justify-between gap-2 px-3 py-3 text-left text-sm transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                onPointerDown={handleExpandMenuPointerDown}
+                onPointerMove={handleExpandMenuPointerMove}
+                onPointerUp={handleExpandMenuPointerUp}
+                onPointerCancel={handleExpandMenuPointerCancel}
+                onClick={(event) => event.preventDefault()}
+              >
+                <span className="font-medium">Generate ideas</span>
+                <span className="inline-flex min-w-[2.25rem] items-center justify-center rounded-full bg-sky-500/20 px-2 py-1 text-xs font-semibold text-sky-100">
+                  ×{expandOverlay.count}
+                </span>
+              </button>
+              {expandOverlay.text ? (
+                <div className="max-w-full px-3 pb-3 text-xs text-white/45">
+                  <span className="block max-h-16 overflow-hidden whitespace-pre-line leading-relaxed">
+                    {expandOverlay.text}
+                  </span>
+                </div>
+              ) : (
+                <div className="px-3 pb-3 text-xs uppercase tracking-wide text-white/30">
+                  Uses existing node text
+                </div>
+              )}
+              {expandSliderVisible && (
+                <div
+                  ref={expandSliderRef}
+                  className="absolute inset-y-1 left-full ml-3 flex w-44 flex-col justify-center gap-2 rounded-lg border border-white/15 bg-slate-900/95 px-3 py-3 shadow-2xl"
+                  onPointerDown={handleSliderPointerDown}
+                  onPointerMove={handleSliderPointerMove}
+                  onPointerUp={handleSliderPointerUp}
+                  onPointerCancel={handleSliderPointerUp}
+                >
+                  <div className="text-xs font-medium uppercase tracking-wide text-white/60">
+                    Subnodes
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative h-1.5 flex-1 rounded-full bg-white/15">
+                      <div
+                        className="absolute inset-y-0 left-0 rounded-full bg-sky-400 transition-all"
+                        style={{ width: `${sliderPercent}%` }}
+                      />
+                      <div
+                        className="absolute -top-1 h-3 w-3 -translate-x-1/2 rounded-full border border-white/80 bg-sky-300 shadow"
+                        style={{ left: `${sliderPercent}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-semibold text-white/90">{expandOverlay.count}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] uppercase tracking-wide text-white/35">
+                    <span>1</span>
+                    <span>{MAX_GENERATED_COUNT}</span>
+                  </div>
+                  <div className="text-[10px] text-white/40">
+                    Drag right while holding • release to generate
+                  </div>
+                </div>
+              )}
             </div>
           </div>,
           document.body
