@@ -60,23 +60,26 @@ export default function NodeCard({
   distance = Number.POSITIVE_INFINITY,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const { focusedNodeId } = useAttention();
+  const { focusedNodeId, setFocusedNode } = useAttention();
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
-  const targetDiameter = getVisualDiameter(
+  const targetDiameterRaw = getVisualDiameter(
     node,
     Number.isFinite(distance) ? (distance as number) : undefined
   );
+  const targetDiameter = Math.max(8, Math.round(targetDiameterRaw));
   const defaultBaseDiameter =
     (NodeVisualConfig.SIZE_LEVELS as Record<number, number>)[0] ??
     targetDiameter;
-  const baseDiameter = node.minimized
+  const baseDiameterRaw = node.minimized
     ? VISUAL_NODE_MINIMIZED_SIZE
     : node.size ?? defaultBaseDiameter;
-  const positionOffset = node.minimized
-    ? 0
-    : (baseDiameter - targetDiameter) / 2;
+  const baseDiameter = Math.max(8, Math.round(baseDiameterRaw));
+  const scale =
+    node.minimized || baseDiameter === 0
+      ? 1
+      : targetDiameter / baseDiameter;
   const nodeColor = getNodeColor(node.type);
   const backgroundColor = node.minimized
     ? node.dotColor ?? nodeColor
@@ -310,24 +313,32 @@ export default function NodeCard({
       data-node-id={node.id}
       style={{
         position: "absolute",
-        left: node.x + positionOffset,
-        top: node.y + positionOffset,
+        left: node.x,
+        top: node.y,
         zIndex: highlight || isFocused ? 30 : 10,
+        width: baseDiameter,
+        height: baseDiameter,
+        transformOrigin: "center center",
       }}
-      initial={false}
+      layout
       animate={{
         opacity: 1,
-        width: targetDiameter,
-        height: targetDiameter,
+        scale: node.minimized ? 1 : targetDiameter / baseDiameter,
       }}
       transition={{
-        type: dragging ? "tween" : "spring",
-        ease: dragging ? "linear" : transition.ease,
-        duration: dragging ? 0 : transition.duration,
-        stiffness: 220,
-        damping: 26,
-        mass: 0.9,
+        layout: {
+          type: dragging ? "tween" : "spring",
+          duration: dragging ? 0 : transition.duration,
+          ease: dragging ? "linear" : transition.ease,
+          stiffness: 220,
+          damping: 26,
+        },
         opacity: { duration: 0.2 },
+        scale: {
+          type: dragging ? "tween" : "spring",
+          duration: dragging ? 0 : transition.duration,
+          ease: dragging ? "linear" : transition.ease,
+        },
       }}
     >
       <motion.div
@@ -340,6 +351,7 @@ export default function NodeCard({
         onDoubleClick={(e) => {
           e.stopPropagation();
           if (!dragging) {
+            setFocusedNode(node.id);
             onDoubleClickNode?.(node.id);
           }
         }}
@@ -460,3 +472,5 @@ export default function NodeCard({
     </motion.div>
   );
 }
+
+

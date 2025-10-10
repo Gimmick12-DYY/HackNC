@@ -17,7 +17,7 @@ import { getNodeColor } from "@/utils/getNodeColor";
 
 type Props = {
   params: DashboardParams;
-  onRequestInfo?: (info: InfoData) => void;
+  onRequestInfo?: (info: InfoData | null) => void;
 };
 
 type NodeMap = Record<string, NodeItem>;
@@ -826,10 +826,14 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     };
 
   useEffect(() => {
-    if (selectedIds.size !== 1) return;
+    if (!onRequestInfo) return;
+    if (selectedIds.size !== 1) {
+      onRequestInfo(null);
+      return;
+    }
     const [id] = Array.from(selectedIds);
     emitInfoFor(id);
-  }, [selectedIds, emitInfoFor]);
+  }, [selectedIds, emitInfoFor, onRequestInfo]);
 
   const onNodeContextMenu = useCallback((e: React.MouseEvent, nodeId: string) => {
     e.preventDefault();
