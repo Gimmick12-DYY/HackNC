@@ -97,49 +97,83 @@ export default function NodeCard({
     NodeVisualConfig.FOCUSED_LABEL.letterSpacing ?? 0;
   const backgroundOpacity = NodeVisualConfig.FOCUSED_LABEL.backgroundOpacity ?? 0.95;
   const backgroundBlur = NodeVisualConfig.FOCUSED_LABEL.backgroundBlur ?? 8;
+  const maxArcLength = Math.PI * circleRadius * 0.95;
+  const charWidth = fontSize * charWidthFactor;
+  const spaceWidth = fontSize * charWidthFactor;
+  const ellipsis = "...";
+  const ellipsisWidth = ellipsis.length * charWidth;
   const labelLines = useMemo(() => {
     if (!isFocused || !focusedLabelText) return [] as string[];
     const words = focusedLabelText.split(/\s+/).filter(Boolean);
     if (words.length === 0) return [] as string[];
     
-    // Calculate max width based on arc length for the curved layout
-    const maxArcLength = Math.PI * circleRadius * 0.9; // Use 90% of semi-circle for safety
-    const spaceWidth = fontSize * charWidthFactor;
+    const normalized = words.join(" ");
     const lines: string[] = [];
-    let currentWords: string[] = [];
-    let currentLength = 0;
+    let currentLine = "";
+    let currentWidth = 0;
 
     for (const word of words) {
-      const wordWidth = Math.max(word.length, 1) * fontSize * charWidthFactor;
-      const nextLength =
-        currentWords.length === 0
-          ? wordWidth
-          : currentLength + spaceWidth + wordWidth;
+      const wordWidth = word.length * charWidth;
+      const nextWidth = currentLine
+        ? currentWidth + spaceWidth + wordWidth
+        : wordWidth;
 
-      if (nextLength > maxArcLength && currentWords.length > 0) {
-        lines.push(currentWords.join(" "));
-        currentWords = [word];
-        currentLength = wordWidth;
+      if (nextWidth <= maxArcLength) {
+        currentLine = currentLine ? `${currentLine} ${word}` : word;
+        currentWidth = nextWidth;
+      } else if (!currentLine) {
+        // word itself too long, hard truncate with ellipsis
+        let truncated = "";
+        let accumulatedWidth = 0;
+        for (const ch of word) {
+          const width = charWidth;
+          if (accumulatedWidth + width + ellipsisWidth > maxArcLength) {
+            break;
+          }
+          truncated += ch;
+          accumulatedWidth += width;
+        }
+        lines.push(`${truncated}${ellipsis}`);
+        currentLine = "";
+        currentWidth = 0;
       } else {
-        currentWords.push(word);
-        currentLength = nextLength;
+        lines.push(currentLine);
+        currentLine = word;
+        currentWidth = wordWidth;
       }
     }
 
-    if (currentWords.length > 0) {
-      lines.push(currentWords.join(" "));
+    if (currentLine) {
+      lines.push(currentLine);
     }
 
-    return lines;
-  }, [charWidthFactor, circleRadius, focusedLabelText, fontSize, isFocused]);
+    const firstLine = lines[0] ?? "";
+    if (firstLine.length * charWidth > maxArcLength) {
+      let truncated = "";
+      let accumulatedWidth = 0;
+      for (const ch of firstLine) {
+        const width = charWidth;
+        if (accumulatedWidth + width + ellipsisWidth > maxArcLength) {
+          break;
+        }
+        truncated += ch;
+        accumulatedWidth += width;
+      }
+      lines[0] = `${truncated}${ellipsis}`;
+    }
+
+    return lines.slice(0, 1);
+  }, [charWidth, ellipsis, ellipsisWidth, focusedLabelText, fontSize, isFocused, maxArcLength, spaceWidth]);
   const displayLines = useMemo(
     () => labelLines.slice().reverse(),
     [labelLines]
   );
+  const lineHeight = fontSize + arcRadiusGap; // Use arcRadiusGap as line spacing
   const maxLineOffset =
     arcRadiusOffset + arcRadiusGap * Math.max(0, labelLines.length - 1);
-  const lineHeight = fontSize + arcRadiusGap; // Use arcRadiusGap as line spacing
-  const svgTopExtent = circleRadius + maxLineOffset + fontSize + svgPadding;
+  // Since we position the label container relative to the node's CENTER (50%),
+  // we only need space above the center for the arcs and text
+  const svgTopExtent = maxLineOffset + fontSize + svgPadding;
   const svgWidth = targetDiameter + svgPadding * 2;
   const svgHeight = svgTopExtent;
   const viewBox = `${-circleRadius - svgPadding} ${-svgTopExtent} ${svgWidth} ${svgTopExtent}`;
@@ -346,7 +380,7 @@ export default function NodeCard({
           transition={{ duration: transition.duration, ease: transition.ease }}
           className="absolute left-1/2 -translate-x-1/2 pointer-events-none"
           style={{
-            bottom: `calc(100% + ${NodeVisualConfig.FOCUSED_LABEL.offset}px)`,
+            bottom: `${circleRadius + NodeVisualConfig.FOCUSED_LABEL.offset}px`,
             zIndex: highlight || focusedNodeId === node.id ? 40 : 20,
           }}
         >
@@ -362,29 +396,6 @@ export default function NodeCard({
                 <feGaussianBlur in="SourceGraphic" stdDeviation={backgroundBlur} />
               </filter>
             </defs>
-            
-            {/* Curved arc background that wraps around all text lines */}
-            {displayLines.length > 0 && (() => {
-              const outerRadius = circleRadius + arcRadiusOffset + (labelLines.length - 1) * lineHeight + fontSize;
-              const innerRadius = circleRadius + arcRadiusOffset - fontSize / 2;
-              const bgPadding = 10;
-              
-              return (
-                <path
-                  d={`
-                    M ${-circleRadius - bgPadding} ${-innerRadius}
-                    A ${innerRadius} ${innerRadius} 0 0 1 ${circleRadius + bgPadding} ${-innerRadius}
-                    L ${circleRadius + bgPadding} ${-outerRadius}
-                    A ${outerRadius} ${outerRadius} 0 0 0 ${-circleRadius - bgPadding} ${-outerRadius}
-                    Z
-                  `}
-                  fill={`rgba(249, 245, 215, ${backgroundOpacity})`}
-                  filter={`url(#${node.id}-label-blur)`}
-                  stroke="rgba(200, 200, 200, 0.3)"
-                  strokeWidth="1"
-                />
-              );
-            })()}
             
             {/* Render text lines on curved arcs, but keep text horizontal/readable */}
             {displayLines.map((line, index) => {
@@ -409,8 +420,8 @@ export default function NodeCard({
                   >
                     <textPath
                       xlinkHref={`#${pathId}`}
-                      startOffset="0%"
-                      textAnchor="start"
+                      startOffset="50%"
+                      textAnchor="middle"
                       method="align"
                       spacing="auto"
                     >
@@ -426,3 +437,4 @@ export default function NodeCard({
     </motion.div>
   );
 }
+

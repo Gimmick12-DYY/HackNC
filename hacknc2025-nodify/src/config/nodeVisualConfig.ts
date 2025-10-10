@@ -18,7 +18,7 @@ export const NodeVisualConfig = {
     fontSize: 13, // px
     textColor: "#111827",
     charWidthFactor: 0.55, // heuristic glyph width factor for wrapping
-    arcRadiusOffset: 10, // px distance from node surface to first arc baseline
+    arcRadiusOffset: 1, // px distance from node surface to first arc baseline
     arcRadiusGap: 20, // px gap between stacked arc lines
     svgPadding: 16, // px padding in SVG viewbox
     letterSpacing: 0,

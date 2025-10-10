@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import NodeCard from "./Node";
 import { DashboardParams, NodeItem, InfoData, NodeID, NodeGraph, NodeData } from "./types";
+import { getVisualDiameter, VISUAL_NODE_MINIMIZED_SIZE } from "@/utils/getVisualDiameter";
+import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
@@ -1673,20 +1675,28 @@ Respond with valid JSON only.`;
         const child = nodes[c];
         if (!parent || !child) return null;
         
-        // 确保使用正确的节点尺寸计算中心点
-        const parentSize = parent.size ?? 160;
-        const childSize = child.size ?? 160; // 使用相同的默认尺寸
-        
-        const pX = parent.x + parentSize / 2;
-        const pY = parent.y + parentSize / 2;
-        const cX = child.x + childSize / 2;
-        const cY = child.y + childSize / 2;
+        // 使用 NodeCard 的同一基准直径逻辑来获取可视中心
+        const level0 = (NodeVisualConfig.SIZE_LEVELS as Record<number, number>)[0];
+        const getBaseDiameter = (n: NodeItem) => {
+          if (n.minimized) return VISUAL_NODE_MINIMIZED_SIZE;
+          const target = getVisualDiameter(n, distances[n.id]);
+          const defaultBase = level0 ?? target;
+          return n.size ?? defaultBase;
+        };
+
+        const parentBase = getBaseDiameter(parent);
+        const childBase = getBaseDiameter(child);
+
+        const pX = parent.x + parentBase / 2;
+        const pY = parent.y + parentBase / 2;
+        const cX = child.x + childBase / 2;
+        const cY = child.y + childBase / 2;
         
         return { pX, pY, cX, cY, key: `${p}-${c}` };
       })
       .filter(Boolean) as Array<{ pX: number; pY: number; cX: number; cY: number; key: string }>;
     return pairs;
-  }, [edges, nodes]);
+  }, [edges, nodes, distances]);
 
   // 生成网格背景
   const gridSize = 50; // 基础网格大小
