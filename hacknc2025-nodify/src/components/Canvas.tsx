@@ -172,7 +172,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const commitFocus = useCallback((id: string | null) => {
     committedFocusIdRef.current = id;
     setFocusedNode(id);
-  }, [setFocusedNode]);
+  }, []);
 
   const handleNodeHover = useCallback((id: string) => {
     hoveredNodeIdRef.current = id;
@@ -182,11 +182,6 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const handleNodeHoverLeave = useCallback((id: string) => {
     if (hoveredNodeIdRef.current === id) {
       hoveredNodeIdRef.current = null;
-      window.requestAnimationFrame(() => {
-        if (!hoveredNodeIdRef.current) {
-          setFocusedNode(committedFocusIdRef.current);
-        }
-      });
     }
   }, [setFocusedNode]);
 
