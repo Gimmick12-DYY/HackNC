@@ -566,14 +566,12 @@ export default function Canvas({ params, onRequestInfo }: Props) {
 
   const openExpandOverlay = useCallback((nodeId: string) => {
     //TODO: suppoert multi-select expabd
-    //TODO: support concurrency: allow multiple nodes to expand at the same time
 
-    // 若已有生成任务在进行中，阻止再次打开并提示
-    //TODO: change this to that forbid expanding the same node before it finishes.
-    // if (generatingNodesRef.current.size > 0) {
-    //   showSnack('上一个请求还在执行中', 'warning');
-    //   return;
-    // }
+    // Prevent reopening the expand overlay for a node whose generation is still running.
+    if (generatingNodesRef.current.has(nodeId)) {
+      showSnack('Generation for this node is still in progress', 'warning');
+      return;
+    }
     const n = nodes[nodeId];
     if (!n) return;
     // 确保不再有上下文菜单和预览状态干扰
@@ -1488,6 +1486,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       console.log('onGenerate function called with id:', id);
       // Prevent double generation for the same node
       if (generatingNodesRef.current.has(id)) {
+        showSnack('Generation for this node is still in progress', 'warning');
         console.log('Generation already in progress for:', id);
         return;
       }
@@ -1645,7 +1644,7 @@ Respond with valid JSON only.`;
         generatingNodesRef.current.delete(id);
       }
     },
-    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart, computeSizeByDepth, getDepthIn]
+    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart, computeSizeByDepth, getDepthIn, showSnack]
   );
 
   const generatingNodesRef = useRef(new Set<string>());
