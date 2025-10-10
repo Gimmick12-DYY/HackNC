@@ -6,23 +6,12 @@ import { NodeItem } from "./types";
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import { getNodeColor } from "@/utils/getNodeColor";
 import { useAttention } from "./Attention";
+import { useTheme, hexToRgba } from "./Themes";
 import {
   getVisualDiameter,
   VISUAL_NODE_MINIMIZED_SIZE,
 } from "@/utils/getVisualDiameter";
 import { getDisplayContent } from "@/utils/getDisplayContent";
-
-const toRgba = (hex: string, alpha: number) => {
-  const sanitized = hex.replace("#", "");
-  if (sanitized.length !== 6) {
-    return `rgba(204, 204, 204, ${alpha})`;
-  }
-  const value = parseInt(sanitized, 16);
-  const r = (value >> 16) & 255;
-  const g = (value >> 8) & 255;
-  const b = value & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
 
 type Props = {
   node: NodeItem;
@@ -62,6 +51,7 @@ export default function NodeCard({
   isGlobalDragging = false,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const { theme } = useTheme();
   const { focusedNodeId, setFocusedNode } = useAttention();
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -78,20 +68,25 @@ export default function NodeCard({
     ? VISUAL_NODE_MINIMIZED_SIZE
     : node.size ?? defaultBaseDiameter;
   const baseDiameter = Math.max(8, Math.round(baseDiameterRaw));
-  const scale =
-    node.minimized || baseDiameter === 0
-      ? 1
-      : targetDiameter / baseDiameter;
-  const nodeColor = getNodeColor(node.type);
-  const backgroundColor = node.minimized
-    ? node.dotColor ?? nodeColor
-    : toRgba(nodeColor, 0.12);
-  const borderColor = node.minimized ? nodeColor : toRgba(nodeColor, 0.35);
+  const nodeColor = getNodeColor(node.type, theme);
+  const minimizedFill = node.dotColor ?? nodeColor;
+  const nodeBackgroundColor = node.minimized
+    ? minimizedFill
+    : hexToRgba(nodeColor, theme.node.backgroundAlpha);
+  const baseBorderColor = node.minimized
+    ? minimizedFill
+    : hexToRgba(nodeColor, theme.node.borderAlpha);
   const isFocused = focusedNodeId === node.id;
+  const activeBorderColor =
+    highlight || isFocused
+      ? theme.node.highlightStroke ?? minimizedFill
+      : baseBorderColor;
   const attentionLevel = Number.isFinite(distance)
     ? Math.max(0, Math.floor(distance as number))
     : null;
-  const opacityLevels = NodeVisualConfig.OPACITY_LEVELS as Record<string | number, number>;
+  const opacityLevels =
+    (theme.node.opacityLevels as Record<string | number, number> | undefined) ??
+    (NodeVisualConfig.OPACITY_LEVELS as Record<string | number, number>);
   const defaultOpacity = opacityLevels.default ?? 0.6;
   const levelOpacity =
     attentionLevel !== null
@@ -100,6 +95,13 @@ export default function NodeCard({
   const nodeOpacity =
     node.minimized || highlight || isFocused ? 1 : levelOpacity;
   const transition = NodeVisualConfig.TRANSITION;
+  const nodeShadow =
+    highlight || isFocused
+      ? theme.node.shadow.highlight
+      : theme.node.shadow.default;
+  const textColor = node.minimized
+    ? theme.node.textColor.minimized
+    : theme.node.textColor.regular;
   const displayEmoji = node.emoji?.trim();
   const ariaLabel = node.full || node.text || "Idea node";
   const focusedLabelText =
@@ -107,18 +109,34 @@ export default function NodeCard({
       ? (getDisplayContent(node, 0) || node.full || node.text || "")
       : "";
   const circleRadius = targetDiameter / 2;
-  const fontSize = NodeVisualConfig.FOCUSED_LABEL.fontSize;
+  const fontSize =
+    theme.node.label.fontSize ?? NodeVisualConfig.FOCUSED_LABEL.fontSize;
   const charWidthFactor =
     NodeVisualConfig.FOCUSED_LABEL.charWidthFactor ?? 0.55;
   const arcRadiusOffset =
-    NodeVisualConfig.FOCUSED_LABEL.arcRadiusOffset ?? 12;
-  const arcRadiusGap = NodeVisualConfig.FOCUSED_LABEL.arcRadiusGap ?? 18;
-  const svgPadding = NodeVisualConfig.FOCUSED_LABEL.svgPadding ?? 16;
-  const labelTextColor = NodeVisualConfig.FOCUSED_LABEL.textColor ?? "#111827";
+    theme.node.label.arcRadiusOffset ??
+    NodeVisualConfig.FOCUSED_LABEL.arcRadiusOffset ??
+    12;
+  const arcRadiusGap =
+    theme.node.label.arcRadiusGap ??
+    NodeVisualConfig.FOCUSED_LABEL.arcRadiusGap ??
+    18;
+  const svgPadding =
+    theme.node.label.svgPadding ??
+    NodeVisualConfig.FOCUSED_LABEL.svgPadding ??
+    16;
+  const labelTextColor =
+    theme.node.label.textColor ??
+    NodeVisualConfig.FOCUSED_LABEL.textColor ??
+    "#111827";
   const labelLetterSpacing =
-    NodeVisualConfig.FOCUSED_LABEL.letterSpacing ?? 0;
-  const backgroundOpacity = NodeVisualConfig.FOCUSED_LABEL.backgroundOpacity ?? 0.95;
-  const backgroundBlur = NodeVisualConfig.FOCUSED_LABEL.backgroundBlur ?? 8;
+    theme.node.label.letterSpacing ??
+    NodeVisualConfig.FOCUSED_LABEL.letterSpacing ??
+    0;
+  const backgroundBlur =
+    theme.node.label.blur ??
+    NodeVisualConfig.FOCUSED_LABEL.backgroundBlur ??
+    8;
   const maxArcLength = Math.PI * circleRadius * 0.95;
   const charWidth = fontSize * charWidthFactor;
   const spaceWidth = fontSize * charWidthFactor;
@@ -129,7 +147,6 @@ export default function NodeCard({
     const words = focusedLabelText.split(/\s+/).filter(Boolean);
     if (words.length === 0) return [] as string[];
     
-    const normalized = words.join(" ");
     const lines: string[] = [];
     let currentLine = "";
     let currentWidth = 0;
@@ -185,7 +202,7 @@ export default function NodeCard({
     }
 
     return lines.slice(0, 1);
-  }, [charWidth, ellipsis, ellipsisWidth, focusedLabelText, fontSize, isFocused, maxArcLength, spaceWidth]);
+  }, [charWidth, ellipsis, ellipsisWidth, focusedLabelText, isFocused, maxArcLength, spaceWidth]);
   const displayLines = useMemo(
     () => labelLines.slice().reverse(),
     [labelLines]
@@ -369,9 +386,9 @@ export default function NodeCard({
           }
         }}
         animate={{
-          backgroundColor,
-          borderColor,
-          borderWidth: node.minimized ? 3 : isFocused ? 3 : 2,
+          backgroundColor: nodeBackgroundColor,
+          borderColor: activeBorderColor,
+          borderWidth: node.minimized ? 3 : highlight || isFocused ? 3 : 2,
           borderStyle: "solid",
         }}
         transition={{
@@ -381,11 +398,8 @@ export default function NodeCard({
         style={{
           width: "100%",
           height: "100%",
-          boxShadow:
-            highlight || isFocused
-              ? "0 12px 30px rgba(15,23,42,0.25)"
-              : "0 6px 18px rgba(15,23,42,0.16)",
-          color: node.minimized ? "#ffffff" : "#1f2937",
+          boxShadow: nodeShadow,
+          color: textColor,
         }}
       >
         <motion.div

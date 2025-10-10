@@ -14,6 +14,7 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { Button, Snackbar, Alert } from "@mui/material";
 import { useAttention } from "./Attention";
 import { getNodeColor } from "@/utils/getNodeColor";
+import { useTheme, hexToRgba } from "./Themes";
 
 type Props = {
   params: DashboardParams;
@@ -107,6 +108,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const showSnack = useCallback((text: string, severity: 'info' | 'warning' | 'error' | 'success' = 'info') => {
     setSnack({ open: true, text, severity });
   }, []);
+
+  const { theme } = useTheme();
 
   const { distances, focusedNodeId, setFocusedNode, recomputeDistances } = useAttention();
   
@@ -647,7 +650,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       phrase: text,
       short: text,
       emoji: "",
-      dotColor: getNodeColor("idea"),
+      dotColor: getNodeColor("idea", theme),
       text,
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
@@ -897,7 +900,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       short: "",
       emoji: "",
       text: "",
-      dotColor: getNodeColor("idea"),
+      dotColor: getNodeColor("idea", theme),
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
     setSelectedIds(new Set([id]));
@@ -1019,7 +1022,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
             full: cleaned,
             phrase: fallbackPhrase,
             short: fallbackShort,
-            dotColor: getNodeColor(n.type),
+            dotColor: getNodeColor(n.type, theme),
             size: newSize,
             x: nx,
             y: ny,
@@ -1027,7 +1030,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         };
       });
     },
-    [getDepthIn, computeSizeByDepth]
+    [getDepthIn, computeSizeByDepth, theme]
   );
 
   const emitInfoFor = useCallback(
@@ -1364,33 +1367,32 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     setNodes((prev) => {
       const node = prev[id];
       if (!node) return prev;
-      
+      const minimizedPalette = theme.node.minimizedPalette;
+      const fallbackColor = getNodeColor(node.type ?? "idea", theme);
       if (node.minimized) {
-        // Restore the node
-        return { 
-          ...prev, 
-          [id]: { 
-            ...node, 
+        return {
+          ...prev,
+          [id]: {
+            ...node,
             minimized: false,
-            dotColor: undefined
-          } 
-        };
-      } else {
-        // Minimize the node
-        const colors = ['#3b82f6', '#eab308', '#22c55e', '#ef4444', '#8b5cf6', '#f97316', '#06b6d4', '#84cc16'];
-        const randomColor = colors[Math.floor(Math.random() * colors.length)];
-        
-        return { 
-          ...prev, 
-          [id]: { 
-            ...node, 
-            minimized: true, 
-            dotColor: randomColor 
-          } 
+            dotColor: undefined,
+          },
         };
       }
+      const paletteSize = minimizedPalette.length;
+      const randomColor =
+        minimizedPalette[Math.floor(Math.random() * Math.max(1, paletteSize))] ??
+        fallbackColor;
+      return {
+        ...prev,
+        [id]: {
+          ...node,
+          minimized: true,
+          dotColor: randomColor,
+        },
+      };
     });
-  }, []);
+  }, [theme]);
 
   // 重写的智能散布算法
   const arrangeAroundSmart = useCallback((centerX: number, centerY: number, childCount: number, parentId: string) => {
@@ -1623,7 +1625,7 @@ Respond with valid JSON only.`;
               children: [],
               size: childSize,
               level: parentDepth + 1,
-              dotColor: getNodeColor(nodeType),
+              dotColor: getNodeColor(nodeType, theme),
             };
             childIds.push(childId);
             childEdges.push([id, childId]);
@@ -1644,7 +1646,7 @@ Respond with valid JSON only.`;
         generatingNodesRef.current.delete(id);
       }
     },
-    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart, computeSizeByDepth, getDepthIn, showSnack]
+    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart, computeSizeByDepth, getDepthIn, schedulePhysicsSettle, showSnack, theme]
   );
 
   const generatingNodesRef = useRef(new Set<string>());
@@ -2027,41 +2029,54 @@ Respond with valid JSON only.`;
     const { previewMultiplier, previewMin } = NodeVisualConfig.LINE_WIDTH;
     return Math.max(previewMin, lineStrokeWidth * previewMultiplier);
   }, [lineStrokeWidth]);
-  const linePalette = NodeVisualConfig.LINE_PROFILES;
+  const linePalette = theme.lines;
   const hasFocusedNode = Boolean(focusedNodeId);
 
   // 生成网格背景
   const gridSize = 35; // 基础网格大小（更密集）
   const gridPattern = useMemo(() => {
-    // 计算适应缩放的网格大小
     let actualGridSize = gridSize;
-    
-    // 当缩放过小时，使用更大的网格
+
     while (actualGridSize * scale < 20 && actualGridSize < 200) {
       actualGridSize *= 2;
     }
-    
-    // 当缩放过大时，使用更小的网格
+
     while (actualGridSize * scale > 200 && actualGridSize > 12.5) {
       actualGridSize /= 2;
     }
-    
+
     const scaledGridSize = actualGridSize * scale;
-    const adjustedOffsetX = (offsetX % scaledGridSize + scaledGridSize) % scaledGridSize;
-    const adjustedOffsetY = (offsetY % scaledGridSize + scaledGridSize) % scaledGridSize;
-    
-    // 根据缩放级别调整网格透明度 - 增强可见性
-    const lineOpacity = Math.min(Math.max(0.5, scale * 0.3), 0.8);
-    const dotOpacity = Math.min(Math.max(0.4, scale * 0.4), 0.7);
-    
+    const adjustedOffsetX =
+      ((offsetX % scaledGridSize) + scaledGridSize) % scaledGridSize;
+    const adjustedOffsetY =
+      ((offsetY % scaledGridSize) + scaledGridSize) % scaledGridSize;
+
+    const computeOpacity = (range: { min: number; max: number; scale: number }) => {
+      const scaled = scale * range.scale;
+      if (!Number.isFinite(scaled)) return range.min;
+      return Math.min(range.max, Math.max(range.min, scaled));
+    };
+
+    const lineOpacity = computeOpacity(theme.canvas.grid.lineOpacity);
+    const dotOpacity = computeOpacity(theme.canvas.grid.dotOpacity);
+
     return {
       size: scaledGridSize,
       offsetX: adjustedOffsetX,
       offsetY: adjustedOffsetY,
       lineOpacity,
-      dotOpacity
+      dotOpacity,
     };
-  }, [scale, offsetX, offsetY]);
+  }, [scale, offsetX, offsetY, theme]);
+
+  const gridLineColor = hexToRgba(
+    theme.canvas.grid.lineColor,
+    gridPattern.lineOpacity
+  );
+  const gridDotColor = hexToRgba(
+    theme.canvas.grid.dotColor,
+    gridPattern.dotOpacity
+  );
 
   return (
     <div
@@ -2075,13 +2090,16 @@ Respond with valid JSON only.`;
       onMouseUp={onCanvasMouseUp}
       style={{
         cursor: isPanning ? 'grabbing' : 'default',
-        background: `
-          linear-gradient(90deg, transparent ${gridPattern.size - 1}px, rgba(156, 163, 175, ${gridPattern.lineOpacity}) 1px),
-          linear-gradient(transparent ${gridPattern.size - 1}px, rgba(156, 163, 175, ${gridPattern.lineOpacity}) 1px),
-          linear-gradient(135deg, #f7f2e8 0%, #f3eadb 100%)
+        backgroundImage: `
+          radial-gradient(${gridDotColor} 1px, transparent 1px),
+          linear-gradient(90deg, transparent ${gridPattern.size - 1}px, ${gridLineColor} 1px),
+          linear-gradient(transparent ${gridPattern.size - 1}px, ${gridLineColor} 1px),
+          ${theme.canvas.background}
         `,
-        backgroundSize: `${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, 100% 100%`,
-        backgroundPosition: `${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, 0 0`
+        backgroundSize: `${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, 100% 100%`,
+        backgroundPosition: `${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, 0 0`,
+        backgroundRepeat: "repeat, repeat, repeat, no-repeat",
+        transition: "background 0.6s ease",
       }}
     >
       {/* 变换容器 - 应用缩放和平移 */}
@@ -2107,8 +2125,8 @@ Respond with valid JSON only.`;
             cx={0}
             cy={0}
             r={6}
-            fill="rgba(239, 68, 68, 0.8)"
-            stroke="rgba(239, 68, 68, 1)"
+            fill={theme.canvas.origin.fill}
+            stroke={theme.canvas.origin.stroke}
             strokeWidth={2}
             style={{ 
               vectorEffect: 'non-scaling-stroke' // 保持圆圈大小不受缩放影响
@@ -2118,7 +2136,7 @@ Respond with valid JSON only.`;
             cx={0}
             cy={0}
             r={2}
-            fill="white"
+            fill={theme.canvas.origin.core}
           />
           
           {lines.map(({ pX, pY, cX, cY, key, connectedToFocus }) => {
