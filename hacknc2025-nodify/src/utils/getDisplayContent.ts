@@ -1,8 +1,6 @@
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import { NodeContentLevel, NodeItem } from "@/components/types";
 
-const fallbackLevels: NodeContentLevel[] = ["full", "phrase", "short", "emoji"];
-
 export const getDisplayContent = (node: NodeItem, distance: number) => {
   const normalizedDistance = Number.isFinite(distance)
     ? Math.max(0, Math.floor(distance))
@@ -20,15 +18,7 @@ export const getDisplayContent = (node: NodeItem, distance: number) => {
     return "";
   }
 
-  const candidates: NodeContentLevel[] = [
-    contentKey as NodeContentLevel,
-    ...fallbackLevels,
-  ];
-
-  for (const key of candidates) {
-    const value = node[key];
-    if (value) return value;
-  }
-  // Legacy fallback: older nodes may only have `text`
-  return node.text || "";
+  const key = contentKey as NodeContentLevel;
+  const value = node[key];
+  return typeof value === "string" ? value : "";
 };
