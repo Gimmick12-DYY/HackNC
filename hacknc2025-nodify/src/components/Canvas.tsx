@@ -68,6 +68,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   const committedFocusIdRef = useRef<string | null>(null);
   const hoveredNodeIdRef = useRef<string | null>(null);
+  const hoverClearTimerRef = useRef<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{ 
     x: number; 
     y: number; 
@@ -125,6 +126,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const dragFrameRef = useRef<number | null>(null);
   const dragPendingRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const edgesRef = useRef(edges);
+  const nodesRef = useRef<NodeMap>({});
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   const hasInitializedCameraRef = useRef(false);
   const rootHoldTimerRef = useRef<number | null>(null);
   const rootHoldActiveRef = useRef(false);
@@ -175,6 +178,11 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   }, []);
 
   const handleNodeHover = useCallback((id: string) => {
+    // Cancel any pending focus-clear timer and focus this node immediately
+    if (hoverClearTimerRef.current !== null) {
+      window.clearTimeout(hoverClearTimerRef.current);
+      hoverClearTimerRef.current = null;
+    }
     hoveredNodeIdRef.current = id;
     setFocusedNode(id);
   }, [setFocusedNode]);
@@ -182,12 +190,17 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const handleNodeHoverLeave = useCallback((id: string) => {
     if (hoveredNodeIdRef.current === id) {
       hoveredNodeIdRef.current = null;
-      // Defer clearing focus to allow immediate transitions between nodes without flicker
-      requestAnimationFrame(() => {
+      if (hoverClearTimerRef.current !== null) {
+        window.clearTimeout(hoverClearTimerRef.current);
+      }
+      // Hold focus for 0.5s after leaving all nodes before minimizing
+      hoverClearTimerRef.current = window.setTimeout(() => {
+        // Only clear if no node has been hovered again
         if (!hoveredNodeIdRef.current) {
           setFocusedNode(null);
         }
-      });
+        hoverClearTimerRef.current = null;
+      }, 500);
     }
   }, [setFocusedNode]);
 
@@ -235,7 +248,208 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     return depth;
   }, []);
 
-  // No physics loop – keep only direct neighbor positioning during drag
+  // =========================
+  // Physics simulation (force layout)
+  // =========================
+  type Velocity = { vx: number; vy: number };
+  const physicsStateRef = useRef<{
+    running: boolean;
+    frameId: number | null;
+    lastTs: number;
+    velocities: Map<string, Velocity>;
+    settleUntil: number | null; // run until this timestamp when not dragging
+  }>({ running: false, frameId: null, lastTs: 0, velocities: new Map(), settleUntil: null });
+
+  const PHYSICS = {
+    springLength: 200,
+    springK: 0.02,
+    enableRepulsion: true,
+    repulsion: 1200,
+    maxRepelDist: 420,
+    gravityK: 0.0015,
+    damping: 0.93, // slightly less damping to respond faster
+    maxSpeed: 520, // allow faster settle
+    timeStep: 1 / 60,
+    cellSize: 240,
+    dragSpringBoost: 2,
+    tetherMinFactor: 0.97,
+    tetherMaxFactor: 1.03,
+    tetherIterations: 4,
+    maxStep: 18,
+  } as const;
+
+  const ensurePhysicsActive = useCallback(() => {
+    const s = physicsStateRef.current;
+    if (s.running) return;
+    s.running = true;
+    s.frameId = requestAnimationFrame(function step(ts) {
+      s.lastTs = ts;
+      const { timeStep } = PHYSICS;
+      const currentNodes = nodesRef.current;
+      const ids = Object.keys(currentNodes);
+      const positions = new Map<string, { x: number; y: number; size: number }>();
+      for (const id of ids) {
+        const n = currentNodes[id];
+        const size = n.size ?? 160;
+        positions.set(id, { x: n.x + size / 2, y: n.y + size / 2, size });
+        if (!s.velocities.has(id)) s.velocities.set(id, { vx: 0, vy: 0 });
+      }
+
+      const cell = (v: number) => Math.floor(v / PHYSICS.cellSize);
+      const grid = new Map<string, string[]>();
+      const put = (cx: number, cy: number, id: string) => {
+        const key = `${cx},${cy}`;
+        const list = grid.get(key);
+        if (list) list.push(id); else grid.set(key, [id]);
+      };
+      ids.forEach((id) => {
+        const p = positions.get(id)!;
+        put(cell(p.x), cell(p.y), id);
+      });
+
+      const forces = new Map<string, { fx: number; fy: number }>();
+      const addForce = (id: string, fx: number, fy: number) => {
+        const f = forces.get(id);
+        if (f) { f.fx += fx; f.fy += fy; } else { forces.set(id, { fx, fy }); }
+      };
+
+      const connected = new Set<string>();
+      const stickParentOf = new Map<string, string>();
+      const makeKey = (a: string, b: string) => a < b ? `${a}|${b}` : `${b}|${a}`;
+
+      const seen = new Set<string>();
+      for (const [pa, pb] of edgesRef.current) {
+        const key = pa < pb ? `${pa}-${pb}` : `${pb}-${pa}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        connected.add(makeKey(pa, pb));
+        const a = positions.get(pa); const b = positions.get(pb);
+        if (!a || !b) continue;
+        if (draggingNodesRef.current.has(pa) && !draggingNodesRef.current.has(pb)) stickParentOf.set(pb, pa);
+        else if (draggingNodesRef.current.has(pb) && !draggingNodesRef.current.has(pa)) stickParentOf.set(pa, pb);
+        const dx = b.x - a.x; const dy = b.y - a.y;
+        const dist = Math.max(1, Math.hypot(dx, dy));
+        const dirx = dx / dist; const diry = dy / dist;
+        const target = PHYSICS.springLength + (a.size + b.size) * 0.25;
+        const stretch = dist - target;
+        const kBoost = (draggingNodesRef.current.has(pa) || draggingNodesRef.current.has(pb)) ? PHYSICS.dragSpringBoost : 1;
+        const f = stretch * PHYSICS.springK * kBoost;
+        addForce(pa, f * dirx, f * diry);
+        addForce(pb, -f * dirx, -f * diry);
+      }
+
+      if (PHYSICS.enableRepulsion) {
+        for (const id of ids) {
+          const p = positions.get(id)!;
+          const cx = cell(p.x), cy = cell(p.y);
+          for (let ox = -1; ox <= 1; ox++) {
+            for (let oy = -1; oy <= 1; oy++) {
+              const key = `${cx + ox},${cy + oy}`;
+              const list = grid.get(key);
+              if (!list) continue;
+              for (const otherId of list) {
+                if (otherId === id) continue;
+                if (connected.has(makeKey(id, otherId))) continue;
+                const q = positions.get(otherId)!;
+                const dx = p.x - q.x; const dy = p.y - q.y;
+                const distSq = dx * dx + dy * dy;
+                if (distSq <= 1) continue;
+                if (distSq > PHYSICS.maxRepelDist * PHYSICS.maxRepelDist) continue;
+                const invDist = 1 / Math.sqrt(distSq);
+                const strength = PHYSICS.repulsion * invDist * invDist;
+                addForce(id, dx * invDist * strength, dy * invDist * strength);
+              }
+            }
+          }
+        }
+      }
+
+      for (const id of ids) {
+        const p = positions.get(id)!;
+        addForce(id, -p.x * PHYSICS.gravityK, -p.y * PHYSICS.gravityK);
+      }
+
+      const dragging = draggingNodesRef.current;
+      const nextCenters = new Map<string, { x: number; y: number; size: number }>();
+      for (const id of ids) {
+        if (dragging.has(id)) {
+          const vel = s.velocities.get(id);
+          if (vel) { vel.vx = 0; vel.vy = 0; }
+          const p = positions.get(id)!;
+          nextCenters.set(id, { x: p.x, y: p.y, size: p.size });
+          continue;
+        }
+        const f = forces.get(id) || { fx: 0, fy: 0 };
+        const vel = s.velocities.get(id)!;
+        vel.vx = (vel.vx + f.fx) * PHYSICS.damping;
+        vel.vy = (vel.vy + f.fy) * PHYSICS.damping;
+        const speed = Math.hypot(vel.vx, vel.vy);
+        if (speed > PHYSICS.maxSpeed) { const scale = PHYSICS.maxSpeed / speed; vel.vx *= scale; vel.vy *= scale; }
+        const p = positions.get(id)!;
+        const nx = p.x + vel.vx * PHYSICS.timeStep;
+        const ny = p.y + vel.vy * PHYSICS.timeStep;
+        nextCenters.set(id, { x: nx, y: ny, size: p.size });
+      }
+
+      if (stickParentOf.size > 0) {
+        for (const [childId, parentId] of stickParentOf.entries()) {
+          const parentNext = nextCenters.get(parentId) || positions.get(parentId);
+          const childTentative = nextCenters.get(childId) || positions.get(childId);
+          if (!parentNext || !childTentative) continue;
+          let dx = childTentative.x - parentNext.x; let dy = childTentative.y - parentNext.y;
+          let len = Math.hypot(dx, dy); if (len < 1) { dx = 1; dy = 0; len = 1; }
+          const ux = dx / len; const uy = dy / len;
+          const target = PHYSICS.springLength + ((parentNext.size + childTentative.size) * 0.25);
+          const nx = parentNext.x + ux * target; const ny = parentNext.y + uy * target;
+          nextCenters.set(childId, { x: nx, y: ny, size: childTentative.size });
+          const v = s.velocities.get(childId); if (v) { v.vx = 0; v.vy = 0; }
+        }
+      }
+
+      for (let iter = 0; iter < PHYSICS.tetherIterations; iter++) {
+        for (const [pa, pb] of edgesRef.current) {
+          const a = nextCenters.get(pa) || positions.get(pa);
+          const b = nextCenters.get(pb) || positions.get(pb);
+          if (!a || !b) continue;
+          const dx = b.x - a.x; const dy = b.y - a.y;
+          const dist = Math.max(1, Math.hypot(dx, dy));
+          const target = PHYSICS.springLength + ((a.size + b.size) * 0.25);
+          const minD = target * PHYSICS.tetherMinFactor;
+          const maxD = target * PHYSICS.tetherMaxFactor;
+          let desired = dist;
+          if (dist > maxD) desired = maxD; else if (dist < minD) desired = minD; else continue;
+          const ux = dx / dist; const uy = dy / dist;
+          const adjustX = ux * (dist - desired); const adjustY = uy * (dist - desired);
+          const aDragging = dragging.has(pa); const bDragging = dragging.has(pb);
+          if (aDragging && !bDragging) { const nb = nextCenters.get(pb)!; nb.x -= adjustX; nb.y -= adjustY; nextCenters.set(pb, nb); }
+          else if (!aDragging && bDragging) { const na = nextCenters.get(pa)!; na.x += adjustX; na.y += adjustY; nextCenters.set(pa, na); }
+          else if (!aDragging && !bDragging) { const na = nextCenters.get(pa)!; na.x += adjustX * 0.5; na.y += adjustY * 0.5; nextCenters.set(pa, na); const nb = nextCenters.get(pb)!; nb.x -= adjustX * 0.5; nb.y -= adjustY * 0.5; nextCenters.set(pb, nb); }
+        }
+      }
+
+      for (const id of ids) {
+        const prev = positions.get(id)!; const cur = nextCenters.get(id);
+        if (!cur) continue; const dx = cur.x - prev.x; const dy = cur.y - prev.y; const dist = Math.hypot(dx, dy);
+        if (dist > PHYSICS.maxStep) { const sScale = PHYSICS.maxStep / dist; cur.x = prev.x + dx * sScale; cur.y = prev.y + dy * sScale; nextCenters.set(id, cur); }
+      }
+
+      const updates: Array<[string, { x: number; y: number }]> = [];
+      for (const id of ids) { const c = nextCenters.get(id) || positions.get(id)!; updates.push([id, { x: c.x - (c.size / 2), y: c.y - (c.size / 2) }]); }
+      if (updates.length) {
+        setNodes((prev) => { const base = { ...prev }; for (const [id, pos] of updates) { const n = base[id]; if (!n) continue; base[id] = { ...n, x: pos.x, y: pos.y }; } return base; });
+      }
+
+      if (draggingNodesRef.current.size === 0) {
+        if (physicsStateRef.current.settleUntil != null && ts < physicsStateRef.current.settleUntil) {
+          // keep settling
+        } else {
+          s.running = false; s.frameId = null; physicsStateRef.current.settleUntil = null; return;
+        }
+      }
+
+      s.frameId = requestAnimationFrame(step);
+    });
+  }, []);
 
   // 屏幕坐标转换为canvas坐标
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
@@ -885,6 +1099,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     if (!draggingNodesRef.current.has(id)) {
       if (draggingNodesRef.current.size === 0) {
         setIsDragging(true);
+        physicsStateRef.current.settleUntil = null;
+        ensurePhysicsActive();
       }
       draggingNodesRef.current.add(id);
       // 如果是组拖拽，记录所有选中节点的原始位置
@@ -945,7 +1161,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         });
       });
     }
-  }, [previewState.parentId, nodes]);
+  }, [previewState.parentId, nodes, ensurePhysicsActive]);
 
   const onMoveEnd = useCallback((id: string, x: number, y: number, originalX?: number, originalY?: number) => {
     if (previewState.parentId === id) {
@@ -1061,6 +1277,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     draggingNodesRef.current.delete(id);
     if (draggingNodesRef.current.size === 0) {
       setIsDragging(false);
+      physicsStateRef.current.settleUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 1000;
+      ensurePhysicsActive();
     }
     // 清理 pending 帧
     if (dragFrameRef.current != null) {
@@ -1068,7 +1286,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       dragFrameRef.current = null;
     }
     dragPendingRef.current.clear();
-  }, [previewState.parentId]);
+  }, [previewState.parentId, ensurePhysicsActive]);
 
   const onDelete = useCallback((id: string) => {
     setNodes((prev) => {
@@ -1852,13 +2070,13 @@ Respond with valid JSON only.`;
               }}
               transition={
                 isDragging
-                  ? { duration: 0 }  // Immediate response during drag
+                  ? { duration: 0 }
                   : {
                       type: "spring",
-                      stiffness: 300,
-                      damping: 25,
-                      mass: 0.8,
-                      duration: 0.4,
+                      stiffness: 520,
+                      damping: 36,
+                      mass: 0.6,
+                      duration: 0.22,
                     }
               }
               stroke="#94a3b8"
@@ -1926,6 +2144,7 @@ Respond with valid JSON only.`;
             onHoverLeave={handleNodeHoverLeave}
             onClickNode={handleNodeClick}
             distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
+            isGlobalDragging={isDragging}
           />
         ))}
       </div>

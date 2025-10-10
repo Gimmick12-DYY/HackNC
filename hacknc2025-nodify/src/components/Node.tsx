@@ -40,6 +40,7 @@ type Props = {
   onHoverLeave?: (id: string) => void;
   onClickNode?: (id: string) => void;
   distance?: number;
+  isGlobalDragging?: boolean;
 };
 
 export default function NodeCard({
@@ -58,6 +59,7 @@ export default function NodeCard({
   onHoverLeave,
   onClickNode,
   distance = Number.POSITIVE_INFINITY,
+  isGlobalDragging = false,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { focusedNodeId, setFocusedNode } = useAttention();
@@ -83,8 +85,8 @@ export default function NodeCard({
   const nodeColor = getNodeColor(node.type);
   const backgroundColor = node.minimized
     ? node.dotColor ?? nodeColor
-    : toRgba(nodeColor, 0.18);
-  const borderColor = node.minimized ? nodeColor : toRgba(nodeColor, 0.5);
+    : toRgba(nodeColor, 0.12);
+  const borderColor = node.minimized ? nodeColor : toRgba(nodeColor, 0.35);
   const isFocused = focusedNodeId === node.id;
   const transition = NodeVisualConfig.TRANSITION;
   const displayEmoji = node.emoji?.trim();
@@ -320,24 +322,24 @@ export default function NodeCard({
         height: baseDiameter,
         transformOrigin: "center center",
       }}
-      layout
+      layout={!(dragging || isGlobalDragging)}
       animate={{
         opacity: 1,
         scale: node.minimized ? 1 : targetDiameter / baseDiameter,
       }}
       transition={{
         layout: {
-          type: dragging ? "tween" : "spring",
-          duration: dragging ? 0 : transition.duration,
-          ease: dragging ? "linear" : transition.ease,
+          type: (dragging || isGlobalDragging) ? "tween" : "spring",
+          duration: (dragging || isGlobalDragging) ? 0 : transition.duration,
+          ease: (dragging || isGlobalDragging) ? "linear" : transition.ease,
           stiffness: 220,
           damping: 26,
         },
         opacity: { duration: 0.2 },
         scale: {
-          type: dragging ? "tween" : "spring",
-          duration: dragging ? 0 : transition.duration,
-          ease: dragging ? "linear" : transition.ease,
+          type: (dragging || isGlobalDragging) ? "tween" : "spring",
+          duration: (dragging || isGlobalDragging) ? 0 : transition.duration,
+          ease: (dragging || isGlobalDragging) ? "linear" : transition.ease,
         },
       }}
     >
@@ -358,12 +360,12 @@ export default function NodeCard({
         animate={{
           backgroundColor,
           borderColor,
-          borderWidth: node.minimized ? 0 : isFocused ? 3 : 2,
+          borderWidth: node.minimized ? 3 : isFocused ? 3 : 2,
           borderStyle: "solid",
         }}
         transition={{
-          duration: dragging ? 0 : transition.duration,
-          ease: dragging ? "linear" : transition.ease,
+          duration: (dragging || isGlobalDragging) ? 0 : transition.duration,
+          ease: (dragging || isGlobalDragging) ? "linear" : transition.ease,
         }}
         style={{
           width: "100%",
@@ -377,8 +379,8 @@ export default function NodeCard({
       >
         <motion.div
           animate={{
-            opacity: node.minimized ? 0 : 1,
-            scale: node.minimized ? 0.75 : 1,
+            opacity: node.minimized ? 1 : 1,
+            scale: node.minimized ? 1 : 1,
           }}
           transition={{
             duration: transition.duration,

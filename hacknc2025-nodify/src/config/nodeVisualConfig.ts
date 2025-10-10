@@ -32,7 +32,7 @@ export const NodeVisualConfig = {
     analogy: "#E17055",
   },
   TRANSITION: {
-    duration: 0.25,
+    duration: 0.16,
     ease: "easeInOut",
   },
 } as const;
