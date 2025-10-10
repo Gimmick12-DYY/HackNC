@@ -9,7 +9,7 @@ import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import { Button, TextField, Snackbar, Alert } from "@mui/material";
+import { Button, Snackbar, Alert, TextField } from "@mui/material";
 import { useAttention } from "./Attention";
 import { getNodeColor } from "@/utils/getNodeColor";
 
@@ -1806,37 +1806,47 @@ Respond with valid JSON only.`;
       )}
 
       {inputOverlay.open && typeof document !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+        <div className="fixed inset-0 z-[70] flex flex-col items-center justify-center px-6">
           <div
             className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
             onClick={closeInputOverlay}
           />
-          <div className="relative z-10 w-full max-w-md px-6">
-            <div className="rounded-2xl bg-white shadow-xl border border-slate-200 p-6">
-              <h2 className="text-lg font-semibold text-slate-900 mb-3">What&apos;s the core idea?</h2>
-              <p className="text-sm text-slate-500 mb-4">Hold anywhere on the canvas to spark your first thought.</p>
-              <form onSubmit={handleInputOverlaySubmit} className="space-y-4">
-                <TextField
-                  autoFocus
-                  multiline
-                  minRows={2}
-                  label="Idea"
-                  placeholder="Describe the concept you want to explore…"
-                  value={inputOverlayValue}
-                  onChange={(event) => setInputOverlayValue(event.target.value)}
-                  fullWidth
-                />
-                <div className="flex items-center justify-end gap-2">
-                  <Button variant="text" onClick={closeInputOverlay}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" variant="contained" disableElevation>
-                    Create Node
-                  </Button>
-                </div>
-              </form>
+          <form
+            onSubmit={handleInputOverlaySubmit}
+            className="relative z-10 w-full max-w-xl flex flex-col items-center gap-8"
+          >
+            <label className="w-full max-w-md flex flex-col items-center">
+              <span className="sr-only">Describe the concept you want to explore</span>
+              <input
+                autoFocus
+                type="text"
+                value={inputOverlayValue}
+                onChange={(event) => setInputOverlayValue(event.target.value)}
+                placeholder="Describe the concept you want to explore…"
+                className="w-full bg-transparent text-center text-2xl font-medium text-white border-b border-white/60 focus:border-white focus:outline-none focus:ring-0 transition-colors pb-4 placeholder:text-white/40"
+              />
+            </label>
+            <div className="flex items-center justify-center gap-4">
+              <Button
+                variant="text"
+                onClick={closeInputOverlay}
+                className="!text-white hover:!bg-white/10"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="text"
+                disableElevation
+                className="!text-white hover:!bg-white/10"
+              >
+                Create Node
+              </Button>
             </div>
-          </div>
+          </form>
+          <p className="absolute bottom-12 z-10 text-center text-sm text-white/70 px-8">
+            Hold anywhere on the canvas to spark your first thought.
+          </p>
         </div>,
         document.body
       )}
