@@ -36,6 +36,9 @@ type Props = {
   onHoldMove?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
   onHoldEnd?: (details: { nodeId: string; clientX: number; clientY: number }) => void;
   onDoubleClickNode?: (id: string) => void;
+  onHoverNode?: (id: string) => void;
+  onHoverLeave?: (id: string) => void;
+  onClickNode?: (id: string) => void;
   distance?: number;
 };
 
@@ -51,10 +54,13 @@ export default function NodeCard({
   onHoldMove,
   onHoldEnd,
   onDoubleClickNode,
+  onHoverNode,
+  onHoverLeave,
+  onClickNode,
   distance = Number.POSITIVE_INFINITY,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const { setFocusedNode, focusedNodeId } = useAttention();
+  const { focusedNodeId } = useAttention();
   const [dragging, setDragging] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
@@ -268,6 +274,26 @@ export default function NodeCard({
     onHoldStartRef.current?.({ nodeId: node.id, clientX: e.clientX, clientY: e.clientY });
   };
 
+  const handleMouseEnter = () => {
+    if (!dragging) {
+      onHoverNode?.(node.id);
+    }
+  };
+
+  const handleMouseLeave = () => {
+    if (!dragging) {
+      onHoverLeave?.(node.id);
+    }
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (dragging) return;
+    e.stopPropagation();
+    if (node.minimized) {
+      onMinimize?.(node.id);
+    }
+    onClickNode?.(node.id);
+  };
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -307,16 +333,13 @@ export default function NodeCard({
       <motion.div
         className="rounded-full backdrop-blur flex items-center justify-center text-center px-4 py-4"
         onMouseDown={startDrag}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
         onContextMenu={handleContextMenu}
-        onClick={() => {
-          if (node.minimized) {
-            onMinimize?.(node.id);
-          }
-        }}
+        onClick={handleClick}
         onDoubleClick={(e) => {
           e.stopPropagation();
           if (!dragging) {
-            setFocusedNode(node.id);
             onDoubleClickNode?.(node.id);
           }
         }}
@@ -437,4 +460,3 @@ export default function NodeCard({
     </motion.div>
   );
 }
-

@@ -66,6 +66,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectedIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
+  const committedFocusIdRef = useRef<string | null>(null);
+  const hoveredNodeIdRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ 
     x: number; 
     y: number; 
@@ -167,6 +169,27 @@ export default function Canvas({ params, onRequestInfo }: Props) {
 
   const nextId = () => `n_${idRef.current++}`;
 
+  const commitFocus = useCallback((id: string | null) => {
+    committedFocusIdRef.current = id;
+    setFocusedNode(id);
+  }, [setFocusedNode]);
+
+  const handleNodeHover = useCallback((id: string) => {
+    hoveredNodeIdRef.current = id;
+    setFocusedNode(id);
+  }, [setFocusedNode]);
+
+  const handleNodeHoverLeave = useCallback((id: string) => {
+    if (hoveredNodeIdRef.current === id) {
+      hoveredNodeIdRef.current = null;
+      window.requestAnimationFrame(() => {
+        if (!hoveredNodeIdRef.current) {
+          setFocusedNode(committedFocusIdRef.current);
+        }
+      });
+    }
+  }, [setFocusedNode]);
+
   useEffect(() => {
     const fallbackId =
       focusedNodeId && nodes[focusedNodeId]
@@ -174,6 +197,20 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         : Object.keys(nodes)[0] ?? null;
     recomputeDistances(attentionGraph, fallbackId);
   }, [attentionGraph, focusedNodeId, nodes, recomputeDistances]);
+
+  useEffect(() => {
+    if (hoveredNodeIdRef.current) return;
+    if (!focusedNodeId) {
+      committedFocusIdRef.current = null;
+      return;
+    }
+    if (
+      committedFocusIdRef.current === null ||
+      !nodes[committedFocusIdRef.current]
+    ) {
+      committedFocusIdRef.current = focusedNodeId;
+    }
+  }, [focusedNodeId, nodes]);
 
   // Fixed node sizes by hierarchy depth (0=root)
   const NODE_SIZES = useMemo(() => [220, 160, 120, 100] as const, []);
@@ -296,6 +333,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       pointerClient: null,
     });
     setSelectedIds(new Set([nodeId]));
+    commitFocus(nodeId);
     const initialCount = Math.min(MAX_GENERATED_COUNT, Math.max(1, params.nodeCount || 3));
     setExpandOverlay({
       open: true,
@@ -305,7 +343,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     });
     setExpandSliderVisible(false);
     expandMenuPointerRef.current = { active: false, sliderVisible: false, startX: 0, source: null };
-  }, [nodes, params.nodeCount, showSnack]);
+  }, [nodes, params.nodeCount, showSnack, commitFocus]);
 
   const handleInputOverlaySubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -610,7 +648,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       dotColor: getNodeColor("idea"),
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
-  setSelectedIds(new Set([id]));
+    setSelectedIds(new Set([id]));
+    commitFocus(id);
     
     setContextMenu(null); // Hide menu after action
   };
@@ -692,8 +731,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const handleNodeClick = useCallback((id: string) => {
     const s = new Set<string>([id]);
     setSelectedIds(s);
-    setFocusedNode(id);
-  }, [setFocusedNode]);
+    commitFocus(id);
+  }, [commitFocus]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
@@ -782,7 +821,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         break;
       case 'info':
         setSelectedIds(new Set([nodeId]));
-        setFocusedNode(nodeId);
+        commitFocus(nodeId);
         break;
     }
       // 其余操作执行后关闭菜单
@@ -1033,6 +1072,11 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     setNodes((prev) => {
       const updated = { ...prev };
       delete updated[id];
+      if (committedFocusIdRef.current === id) {
+        const remainingIds = Object.keys(updated);
+        const nextFocus = remainingIds.length ? remainingIds[0] : null;
+        commitFocus(nextFocus);
+      }
       return updated;
     });
     // Also remove any edges connected to this node
@@ -1053,7 +1097,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         pointerClient: null,
       };
     });
-  }, []);
+  }, [commitFocus]);
 
   const onMinimize = useCallback((id: string) => {
     setNodes((prev) => {
@@ -1876,6 +1920,9 @@ Respond with valid JSON only.`;
             onHoldMove={handleNodeHoldMove}
             onHoldEnd={handleNodeHoldEnd}
             onDoubleClickNode={handleNodeDoubleClick}
+            onHoverNode={handleNodeHover}
+            onHoverLeave={handleNodeHoverLeave}
+            onClickNode={handleNodeClick}
             distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
           />
         ))}
