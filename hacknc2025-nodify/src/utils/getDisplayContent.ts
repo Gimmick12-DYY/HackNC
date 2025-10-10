@@ -27,10 +27,8 @@ export const getDisplayContent = (node: NodeItem, distance: number) => {
 
   for (const key of candidates) {
     const value = node[key];
-    if (value) {
-      return value;
-    }
+    if (value) return value;
   }
-
-  return "";
+  // Legacy fallback: older nodes may only have `text`
+  return node.text || "";
 };
