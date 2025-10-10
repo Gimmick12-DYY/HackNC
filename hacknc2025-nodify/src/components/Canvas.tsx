@@ -182,16 +182,19 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const handleNodeHoverLeave = useCallback((id: string) => {
     if (hoveredNodeIdRef.current === id) {
       hoveredNodeIdRef.current = null;
+      // Defer clearing focus to allow immediate transitions between nodes without flicker
+      requestAnimationFrame(() => {
+        if (!hoveredNodeIdRef.current) {
+          setFocusedNode(null);
+        }
+      });
     }
   }, [setFocusedNode]);
 
   useEffect(() => {
-    const fallbackId =
-      focusedNodeId && nodes[focusedNodeId]
-        ? focusedNodeId
-        : Object.keys(nodes)[0] ?? null;
-    recomputeDistances(attentionGraph, fallbackId);
-  }, [attentionGraph, focusedNodeId, nodes, recomputeDistances]);
+    // When no node is focused/hovered, clear distances so nodes minimize
+    recomputeDistances(attentionGraph, focusedNodeId ?? null);
+  }, [attentionGraph, focusedNodeId, recomputeDistances]);
 
   useEffect(() => {
     if (hoveredNodeIdRef.current) return;
