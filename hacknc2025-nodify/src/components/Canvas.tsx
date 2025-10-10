@@ -1699,7 +1699,7 @@ Respond with valid JSON only.`;
   }, [edges, nodes, distances]);
 
   // 生成网格背景
-  const gridSize = 50; // 基础网格大小
+  const gridSize = 35; // 基础网格大小（更密集）
   const gridPattern = useMemo(() => {
     // 计算适应缩放的网格大小
     let actualGridSize = gridSize;
