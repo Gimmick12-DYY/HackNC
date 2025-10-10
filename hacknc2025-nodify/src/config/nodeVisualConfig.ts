@@ -9,8 +9,7 @@ export const NodeVisualConfig = {
   CONTENT_LEVELS: {
     0: "full",
     1: "phrase",
-    2: "short",
-    3: "emoji",
+    2: "emoji",
     default: "none",
   },
   FOCUSED_LABEL: {
