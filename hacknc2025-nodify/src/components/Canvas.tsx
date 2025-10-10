@@ -262,20 +262,24 @@ export default function Canvas({ params, onRequestInfo }: Props) {
 
   const PHYSICS = {
     springLength: 200,
-    springK: 0.02,
+    springK: 1.1,
+    springNonLinearStrength: 1.2,
+    springNonLinearPower: 3,
+    springNonLinearClamp: 0.8,
     enableRepulsion: true,
-    repulsion: 1200,
+    repulsion: 10000,
     maxRepelDist: 420,
     gravityK: 0.0015,
     damping: 0.93, // slightly less damping to respond faster
-    maxSpeed: 520, // allow faster settle
-    timeStep: 1 / 60,
+    maxSpeed: 32000000, // allow faster settle
+    timeStep: 1 / 120,
     cellSize: 240,
     dragSpringBoost: 2,
     tetherMinFactor: 0.97,
     tetherMaxFactor: 1.03,
     tetherIterations: 4,
-    maxStep: 18,
+    maxStep: 25,
+    cursorMinMotionPx: 5,
   } as const;
 
   const ensurePhysicsActive = useCallback(() => {
@@ -333,7 +337,11 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         const target = PHYSICS.springLength + (a.size + b.size) * 0.25;
         const stretch = dist - target;
         const kBoost = (draggingNodesRef.current.has(pa) || draggingNodesRef.current.has(pb)) ? PHYSICS.dragSpringBoost : 1;
-        const f = stretch * PHYSICS.springK * kBoost;
+        const stretchRatioRaw = target > 0 ? Math.abs(stretch) / target : 0;
+        const stretchRatio = Math.min(stretchRatioRaw, PHYSICS.springNonLinearClamp);
+        const nonlinearMultiplier = 1 + PHYSICS.springNonLinearStrength * Math.pow(stretchRatio, PHYSICS.springNonLinearPower);
+        const effectiveK = PHYSICS.springK * nonlinearMultiplier;
+        const f = stretch * effectiveK * kBoost;
         addForce(pa, f * dirx, f * diry);
         addForce(pb, -f * dirx, -f * diry);
       }
@@ -370,6 +378,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       }
 
       const dragging = draggingNodesRef.current;
+      const minMotionSq = PHYSICS.cursorMinMotionPx * PHYSICS.cursorMinMotionPx;
       const nextCenters = new Map<string, { x: number; y: number; size: number }>();
       for (const id of ids) {
         if (dragging.has(id)) {
@@ -428,9 +437,27 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       }
 
       for (const id of ids) {
-        const prev = positions.get(id)!; const cur = nextCenters.get(id);
-        if (!cur) continue; const dx = cur.x - prev.x; const dy = cur.y - prev.y; const dist = Math.hypot(dx, dy);
-        if (dist > PHYSICS.maxStep) { const sScale = PHYSICS.maxStep / dist; cur.x = prev.x + dx * sScale; cur.y = prev.y + dy * sScale; nextCenters.set(id, cur); }
+        const prev = positions.get(id)!;
+        const cur = nextCenters.get(id);
+        if (!cur) { nextCenters.set(id, { ...prev }); continue; }
+        const dx = cur.x - prev.x;
+        const dy = cur.y - prev.y;
+        const moveSq = dx * dx + dy * dy;
+        if (moveSq < minMotionSq && !dragging.has(id)) {
+          cur.x = prev.x;
+          cur.y = prev.y;
+          nextCenters.set(id, cur);
+          const vel = s.velocities.get(id);
+          if (vel) { vel.vx = 0; vel.vy = 0; }
+          continue;
+        }
+        const dist = Math.sqrt(moveSq);
+        if (dist > PHYSICS.maxStep) {
+          const sScale = PHYSICS.maxStep / dist;
+          cur.x = prev.x + dx * sScale;
+          cur.y = prev.y + dy * sScale;
+          nextCenters.set(id, cur);
+        }
       }
 
       const updates: Array<[string, { x: number; y: number }]> = [];
@@ -528,11 +555,15 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   }, []);
 
   const openExpandOverlay = useCallback((nodeId: string) => {
+    //TODO: suppoert multi-select expabd
+    //TODO: support concurrency: allow multiple nodes to expand at the same time
+
     // 若已有生成任务在进行中，阻止再次打开并提示
-    if (generatingNodesRef.current.size > 0) {
-      showSnack('上一个请求还在执行中', 'warning');
-      return;
-    }
+    //TODO: change this to that forbid expanding the same node before it finishes.
+    // if (generatingNodesRef.current.size > 0) {
+    //   showSnack('上一个请求还在执行中', 'warning');
+    //   return;
+    // }
     const n = nodes[nodeId];
     if (!n) return;
     // 确保不再有上下文菜单和预览状态干扰
@@ -2122,7 +2153,7 @@ Respond with valid JSON only.`;
             animate={{ opacity: 1, scale: 1 }}
             transition={{ type: "spring", stiffness: 180, damping: 20, mass: 0.7 }}
           >
-            <span className="opacity-70">Preview</span>
+            <span className="opacity-70">Generating...</span>
           </motion.div>
         ))}
 

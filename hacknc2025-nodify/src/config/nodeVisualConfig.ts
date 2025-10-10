@@ -1,10 +1,10 @@
 export const NodeVisualConfig = {
   SIZE_LEVELS: {
-    0: 100,
-    1: 55,
-    2: 35,
-    3: 20,
-    SMALLEST_SIZE: 5,
+    0: 80,
+    1: 65,
+    2: 50,
+    3: 35,
+    SMALLEST_SIZE: 20,
   },
   CONTENT_LEVELS: {
     0: "full",
