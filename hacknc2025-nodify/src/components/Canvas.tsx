@@ -478,6 +478,16 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     });
   }, []);
 
+  const schedulePhysicsSettle = useCallback((duration = 1500) => {
+    requestAnimationFrame(() => {
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const target = now + duration;
+      const current = physicsStateRef.current.settleUntil ?? 0;
+      physicsStateRef.current.settleUntil = Math.max(current, target);
+      ensurePhysicsActive();
+    });
+  }, [ensurePhysicsActive]);
+
   // 屏幕坐标转换为canvas坐标
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -644,7 +654,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
     if (parentId) setEdges((e) => [...e, [parentId, id]]);
-  setSelectedIds(new Set([id]));
+    setSelectedIds(new Set([id]));
+    schedulePhysicsSettle();
     return id;
   };
 
@@ -893,6 +904,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     setNodes((prev) => ({ ...prev, [id]: node }));
     setSelectedIds(new Set([id]));
     commitFocus(id);
+    schedulePhysicsSettle();
     
     setContextMenu(null); // Hide menu after action
   };
@@ -1622,6 +1634,9 @@ Respond with valid JSON only.`;
         });
         
         setEdges((e) => [...e, ...childEdges]);
+        if (childEdges.length > 0) {
+          schedulePhysicsSettle();
+        }
         
       } catch (error) {
         console.error('Error in generation:', error);
@@ -1964,12 +1979,13 @@ Respond with valid JSON only.`;
   );
 
   const lines = useMemo(() => {
+    const focusId = focusedNodeId;
     const pairs = edges
       .map(([p, c]) => {
         const parent = nodes[p];
         const child = nodes[c];
         if (!parent || !child) return null;
-        
+
         // 使用 NodeCard 的同一基准直径逻辑来获取可视中心
         const level0 = (NodeVisualConfig.SIZE_LEVELS as Record<number, number>)[0];
         const getBaseDiameter = (n: NodeItem) => {
@@ -1986,12 +2002,34 @@ Respond with valid JSON only.`;
         const pY = parent.y + parentBase / 2;
         const cX = child.x + childBase / 2;
         const cY = child.y + childBase / 2;
-        
-        return { pX, pY, cX, cY, key: `${p}-${c}` };
+
+        const connectedToFocus =
+          !!focusId && (parent.id === focusId || child.id === focusId);
+
+        return { pX, pY, cX, cY, key: `${p}-${c}`, connectedToFocus };
       })
-      .filter(Boolean) as Array<{ pX: number; pY: number; cX: number; cY: number; key: string }>;
+      .filter(Boolean) as Array<{
+        pX: number;
+        pY: number;
+        cX: number;
+        cY: number;
+        key: string;
+        connectedToFocus: boolean;
+      }>;
     return pairs;
-  }, [edges, nodes, distances]);
+  }, [edges, nodes, distances, focusedNodeId]);
+
+  const lineStrokeWidth = useMemo(() => {
+    const { base, minScaleFactor, maxScaleFactor } = NodeVisualConfig.LINE_WIDTH;
+    const factor = Math.max(minScaleFactor, Math.min(maxScaleFactor, scale));
+    return Number((base * factor).toFixed(3));
+  }, [scale]);
+  const previewStrokeWidth = useMemo(() => {
+    const { previewMultiplier, previewMin } = NodeVisualConfig.LINE_WIDTH;
+    return Math.max(previewMin, lineStrokeWidth * previewMultiplier);
+  }, [lineStrokeWidth]);
+  const linePalette = NodeVisualConfig.LINE_PROFILES;
+  const hasFocusedNode = Boolean(focusedNodeId);
 
   // 生成网格背景
   const gridSize = 35; // 基础网格大小（更密集）
@@ -2084,39 +2122,46 @@ Respond with valid JSON only.`;
             fill="white"
           />
           
-          {lines.map(({ pX, pY, cX, cY, key }) => (
-            <motion.line
-              key={key}
-              animate={{
-                x1: pX,
-                y1: pY,
-                x2: cX,
-                y2: cY,
-              }}
-              initial={{
-                x1: pX,
-                y1: pY,
-                x2: cX,
-                y2: cY,
-              }}
-              transition={
-                isDragging
-                  ? { duration: 0 }
-                  : {
-                      type: "spring",
-                      stiffness: 520,
-                      damping: 36,
-                      mass: 0.6,
-                      duration: 0.22,
-                    }
-              }
-              stroke="#94a3b8"
-              strokeWidth={1.5}
-              style={{ 
-                vectorEffect: 'non-scaling-stroke' // 保持线条粗细不受缩放影响
-              }}
-            />
-          ))}
+          {lines.map(({ pX, pY, cX, cY, key, connectedToFocus }) => {
+            const strokeColor = connectedToFocus
+              ? linePalette.connected.stroke
+              : hasFocusedNode
+                ? linePalette.dimmed.stroke
+                : linePalette.default.stroke;
+            return (
+              <motion.line
+                key={key}
+                animate={{
+                  x1: pX,
+                  y1: pY,
+                  x2: cX,
+                  y2: cY,
+                }}
+                initial={{
+                  x1: pX,
+                  y1: pY,
+                  x2: cX,
+                  y2: cY,
+                }}
+                transition={
+                  isDragging
+                    ? { duration: 0 }
+                    : {
+                        type: "spring",
+                        stiffness: 520,
+                        damping: 36,
+                        mass: 0.6,
+                        duration: 0.22,
+                      }
+                }
+                stroke={strokeColor}
+                strokeWidth={lineStrokeWidth}
+                style={{ 
+                  vectorEffect: 'non-scaling-stroke' // 保持线条粗细不受缩放影响
+                }}
+              />
+            );
+          })}
           {previewState.anchor &&
             previewState.placeholders.map((placeholder) => {
               const targetX = placeholder.x + placeholder.size / 2;
@@ -2128,11 +2173,11 @@ Respond with valid JSON only.`;
                   y1={previewState.anchor!.y}
                   x2={targetX}
                   y2={targetY}
-                  stroke="#94a3b8"
-                  strokeWidth={1.2}
+                  stroke={linePalette.preview.stroke}
+                  strokeWidth={previewStrokeWidth}
                   strokeDasharray="6 6"
                   initial={{ opacity: 0 }}
-                  animate={{ opacity: 0.6 }}
+                  animate={{ opacity: linePalette.preview.opacity }}
                   style={{ vectorEffect: 'non-scaling-stroke' }}
                 />
               );

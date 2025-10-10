@@ -88,6 +88,17 @@ export default function NodeCard({
     : toRgba(nodeColor, 0.12);
   const borderColor = node.minimized ? nodeColor : toRgba(nodeColor, 0.35);
   const isFocused = focusedNodeId === node.id;
+  const attentionLevel = Number.isFinite(distance)
+    ? Math.max(0, Math.floor(distance as number))
+    : null;
+  const opacityLevels = NodeVisualConfig.OPACITY_LEVELS as Record<string | number, number>;
+  const defaultOpacity = opacityLevels.default ?? 0.6;
+  const levelOpacity =
+    attentionLevel !== null
+      ? opacityLevels[attentionLevel] ?? defaultOpacity
+      : defaultOpacity;
+  const nodeOpacity =
+    node.minimized || highlight || isFocused ? 1 : levelOpacity;
   const transition = NodeVisualConfig.TRANSITION;
   const displayEmoji = node.emoji?.trim();
   const ariaLabel = node.full || node.text || "Idea node";
@@ -324,7 +335,7 @@ export default function NodeCard({
       }}
       layout={!(dragging || isGlobalDragging)}
       animate={{
-        opacity: 1,
+        opacity: nodeOpacity,
         scale: node.minimized ? 1 : targetDiameter / baseDiameter,
       }}
       transition={{

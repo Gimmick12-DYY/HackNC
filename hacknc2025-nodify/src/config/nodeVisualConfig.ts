@@ -35,6 +35,35 @@ export const NodeVisualConfig = {
     duration: 0.16,
     ease: "easeInOut",
   },
+  LINE_PROFILES: {
+    default: {
+      stroke: "rgba(176, 190, 210, 0.42)",
+    },
+    connected: {
+      stroke: "rgba(100, 116, 139, 0.85)",
+    },
+    dimmed: {
+      stroke: "rgba(176, 190, 210, 0.2)",
+    },
+    preview: {
+      stroke: "rgba(148, 163, 184, 0.38)",
+      opacity: 0.6,
+    },
+  },
+  LINE_WIDTH: {
+    base: 1.5,
+    minScaleFactor: 0.35,
+    maxScaleFactor: 0.8,
+    previewMultiplier: 0.75,
+    previewMin: 0.3,
+  },
+  OPACITY_LEVELS: {
+    0: 1,
+    1: 0.92,
+    2: 0.78,
+    3: 0.64,
+    default: 0.52,
+  },
 } as const;
 
 export type AttentionSizeLevel = keyof typeof NodeVisualConfig.SIZE_LEVELS;
