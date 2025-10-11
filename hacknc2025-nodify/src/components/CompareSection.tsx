@@ -129,6 +129,9 @@ export default function CompareSection({
         width,
         background: sidebar.background,
         borderLeftColor: sidebar.border,
+        height: "calc(100vh - 64px)",
+        maxHeight: "calc(100vh - 64px)",
+        overflow: "hidden",
       }}
     >
       <div

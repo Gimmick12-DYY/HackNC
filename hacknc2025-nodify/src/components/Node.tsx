@@ -17,7 +17,6 @@ type Props = {
   node: NodeItem;
   onMove: (id: string, x: number, y: number) => void;
   onMoveEnd: (id: string, x: number, y: number, originalX?: number, originalY?: number) => void;
-  onMinimize?: (id: string) => void;
   onContextMenu?: (e: React.MouseEvent, nodeId: string) => void;
   highlight?: boolean;
   screenToCanvas?: (screenX: number, screenY: number) => { x: number; y: number };
@@ -36,7 +35,6 @@ export default function NodeCard({
   node,
   onMove,
   onMoveEnd,
-  onMinimize,
   onContextMenu,
   highlight,
   screenToCanvas,
@@ -322,9 +320,6 @@ export default function NodeCard({
   const handleClick = (e: React.MouseEvent) => {
     if (dragging) return;
     e.stopPropagation();
-    if (node.minimized) {
-      onMinimize?.(node.id);
-    }
     onClickNode?.(node.id, e);
   };
 

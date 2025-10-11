@@ -75,23 +75,11 @@ export default function Dashboard({
         <div
           className="fixed flex flex-col items-end gap-5 z-40"
           style={{
-            right: `${buttonRight}px`,
-            bottom: `${buttonBottom + 80}px`,
+            right: `${buttonRight + 80}px`,
+            bottom: `${buttonBottom}px`,
           }}
         >
-          <div className="flex flex-row-reverse items-center gap-3">
-            <button
-              type="button"
-              className="w-14 h-14 rounded-full text-xl flex items-center justify-center shadow-lg"
-              aria-hidden
-              tabIndex={-1}
-              style={{
-                background: floatingButton.background,
-                color: floatingButton.text,
-              }}
-            >
-              🧮
-            </button>
+          <div className="flex items-center justify-end gap-3">
             <div
               className="rounded-2xl shadow-xl px-4 py-3 w-60 border"
               style={{
@@ -117,8 +105,6 @@ export default function Dashboard({
                 size="small"
               />
             </div>
-          </div>
-          <div className="flex flex-row-reverse items-center gap-3">
             <button
               type="button"
               className="w-14 h-14 rounded-full text-xl flex items-center justify-center shadow-lg"
@@ -129,8 +115,10 @@ export default function Dashboard({
                 color: floatingButton.text,
               }}
             >
-              🔡
+              🧮
             </button>
+          </div>
+          <div className="flex items-center justify-end gap-3">
             <div
               className="rounded-2xl shadow-xl px-4 py-3 w-60 border"
               style={{
@@ -156,8 +144,6 @@ export default function Dashboard({
                 size="small"
               />
             </div>
-          </div>
-          <div className="flex flex-row-reverse items-center gap-3">
             <button
               type="button"
               className="w-14 h-14 rounded-full text-xl flex items-center justify-center shadow-lg"
@@ -168,8 +154,10 @@ export default function Dashboard({
                 color: floatingButton.text,
               }}
             >
-              🔥
+              🔡
             </button>
+          </div>
+          <div className="flex items-center justify-end gap-3">
             <div
               className="rounded-2xl shadow-xl px-4 py-3 w-60 border"
               style={{
@@ -195,6 +183,18 @@ export default function Dashboard({
                 size="small"
               />
             </div>
+            <button
+              type="button"
+              className="w-14 h-14 rounded-full text-xl flex items-center justify-center shadow-lg"
+              aria-hidden
+              tabIndex={-1}
+              style={{
+                background: floatingButton.background,
+                color: floatingButton.text,
+              }}
+            >
+              🔥
+            </button>
           </div>
         </div>
       )}

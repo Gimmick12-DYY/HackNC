@@ -21,7 +21,6 @@ import { DisjointSet } from "@/utils/disjointSet";
 import { debateNodes } from "./debate";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
@@ -35,6 +34,8 @@ import { useTheme, hexToRgba } from "./Themes";
 type Props = {
   params: DashboardParams;
   onRequestInfo?: (info: InfoData | null) => void;
+  onDebateHistoryUpdate?: (history: DebateRecord[]) => void;
+  registerDebateActions?: (actions: { deleteDebate: (id: string) => void }) => void;
 };
 
 type NodeMap = Record<string, NodeItem>;
@@ -156,7 +157,7 @@ const NODE_HOLD_MOVE_THRESHOLD = 24;
 const PREVIEW_PLACEHOLDER_SIZE = 150;
 const MAX_GENERATED_COUNT = 12;
 
-export default function Canvas({ params, onRequestInfo }: Props) {
+export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, registerDebateActions }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [groupAssignments, setGroupAssignments] = useState<Record<string, string>>({});
@@ -202,6 +203,27 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     holdStartClient: null,
     pointerClient: null,
   });
+  const previewStateRef = useRef(previewState);
+  const previewPointerPendingRef = useRef<{ nodeId: string; clientX: number; clientY: number } | null>(null);
+  const previewPointerAppliedRef = useRef<{ nodeId: string; clientX: number; clientY: number } | null>(null);
+  const previewPointerFrameRef = useRef<number | null>(null);
+  useEffect(() => { previewStateRef.current = previewState; }, [previewState]);
+  const resetPreviewPointerTracking = useCallback(() => {
+    if (previewPointerFrameRef.current != null) {
+      cancelAnimationFrame(previewPointerFrameRef.current);
+      previewPointerFrameRef.current = null;
+    }
+    previewPointerPendingRef.current = null;
+    previewPointerAppliedRef.current = null;
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (previewPointerFrameRef.current != null) {
+        cancelAnimationFrame(previewPointerFrameRef.current);
+        previewPointerFrameRef.current = null;
+      }
+    };
+  }, []);
   const [expandOverlay, setExpandOverlay] = useState<ExpandOverlayState>({
     open: false,
     nodeId: null,
@@ -319,6 +341,26 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       areGroupMapsEqual(prev, assignments) ? prev : assignments
     );
   }, [nodes, edges, computeGroupAssignmentsFor]);
+
+  useEffect(() => {
+    if (!onDebateHistoryUpdate) return;
+    const list = Object.values(debateHistory).sort((a, b) => b.createdAt - a.createdAt);
+    onDebateHistoryUpdate(list);
+  }, [debateHistory, onDebateHistoryUpdate]);
+
+  const deleteDebate = useCallback((id: string) => {
+    setDebateHistory((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!registerDebateActions) return;
+    registerDebateActions({ deleteDebate });
+  }, [registerDebateActions, deleteDebate]);
 
   const nextId = () => `n_${idRef.current++}`;
   const computeNextIdSeed = useCallback((map: NodeMap) => {
@@ -612,18 +654,20 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         updates.push([id, { x: nextX, y: nextY }]);
       }
       if (updates.length) {
-        setNodes((prev) => {
-          let base = prev;
-          let mutated = false;
-          for (const [id, pos] of updates) {
-            const node = base[id];
-            if (!node) continue;
-            if (Math.abs(node.x - pos.x) < 0.01 && Math.abs(node.y - pos.y) < 0.01) continue;
-            if (!mutated) { base = { ...prev }; mutated = true; }
-            base[id] = { ...node, x: pos.x, y: pos.y };
-          }
-          return mutated ? base : prev;
-        });
+        const baseNodes = nodesRef.current;
+        let mutated = false;
+        const nextNodes: NodeMap = { ...baseNodes };
+        for (const [id, pos] of updates) {
+          const node = baseNodes[id];
+          if (!node) continue;
+          if (Math.abs(node.x - pos.x) < 0.01 && Math.abs(node.y - pos.y) < 0.01) continue;
+          mutated = true;
+          nextNodes[id] = { ...node, x: pos.x, y: pos.y };
+        }
+        if (mutated) {
+          nodesRef.current = nextNodes;
+          setNodes(nextNodes);
+        }
       }
 
       if (draggingNodesRef.current.size === 0) {
@@ -662,7 +706,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       phrase: node.phrase,
       short: node.short,
       emoji: node.emoji,
-      minimized: node.minimized,
+      minimized: false,
       dotColor: node.dotColor,
       text: node.text,
       groupId: groupAssignments[node.id] ?? node.groupId,
@@ -714,7 +758,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
             phrase: node.phrase,
             short: node.short,
             emoji: node.emoji,
-            minimized: node.minimized,
+            minimized: false,
             dotColor: node.dotColor,
             text: node.text ?? node.full,
             size: node.size,
@@ -1000,6 +1044,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   }, [cancelRootHold]);
 
   const clearPreview = useCallback(() => {
+    resetPreviewPointerTracking();
     setPreviewState({
       parentId: null,
       placeholders: [],
@@ -1007,7 +1052,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       holdStartClient: null,
       pointerClient: null,
     });
-  }, []);
+  }, [resetPreviewPointerTracking]);
 
   const cancelNodeHold = useCallback(() => {
     if (nodeHoldTimerRef.current !== null) {
@@ -1015,7 +1060,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       nodeHoldTimerRef.current = null;
     }
     nodeHoldInfoRef.current = null;
-  }, []);
+    resetPreviewPointerTracking();
+  }, [resetPreviewPointerTracking]);
 
   useEffect(() => {
     const handleShiftDown = (event: KeyboardEvent) => {
@@ -1096,6 +1142,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   }, [multiSelectMenu]);
 
   const closeExpandOverlay = useCallback(() => {
+    resetPreviewPointerTracking();
     setExpandOverlay((prev) => ({ ...prev, open: false, nodeId: null }));
     setPreviewState({
       parentId: null,
@@ -1104,7 +1151,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       holdStartClient: null,
       pointerClient: null,
     });
-  }, []);
+  }, [resetPreviewPointerTracking]);
 
   const openExpandOverlay = useCallback((nodeId: string) => {
     //TODO: suppoert multi-select expabd
@@ -1118,13 +1165,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     if (!n) return;
     // 确保不再有上下文菜单和预览状态干扰
     setContextMenu(null);
-    setPreviewState({
-      parentId: null,
-      placeholders: [],
-      anchor: null,
-      holdStartClient: null,
-      pointerClient: null,
-    });
+    clearPreview();
     setSelectedIds(new Set([nodeId]));
     commitFocus(nodeId);
     const initialCount = Math.min(MAX_GENERATED_COUNT, Math.max(1, params.nodeCount || 3));
@@ -1136,7 +1177,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     });
     setExpandSliderVisible(false);
     expandMenuPointerRef.current = { active: false, sliderVisible: false, startX: 0, source: null };
-  }, [nodes, params.nodeCount, showSnack, commitFocus]);
+  }, [nodes, params.nodeCount, showSnack, commitFocus, clearPreview]);
 
   const handleInputOverlaySubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1850,9 +1891,6 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         setPendingConnection({ childId: nodeId });
         showSnack('Select another node to complete the connection', 'info');
         break;
-      case 'minimize':
-        onMinimize?.(nodeId);
-        break;
       case 'delete':
         onDelete?.(nodeId);
         break;
@@ -2135,6 +2173,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       next.delete(id);
       return next;
     });
+    resetPreviewPointerTracking();
     setPreviewState((prev) => {
       if (prev.parentId !== id) return prev;
       return {
@@ -2148,38 +2187,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     setPendingConnection((current) =>
       current && current.childId === id ? null : current
     );
-  }, [commitFocus]);
-
-  const onMinimize = useCallback((id: string) => {
-    setNodes((prev) => {
-      const node = prev[id];
-      if (!node) return prev;
-      const minimizedPalette = theme.node.minimizedPalette;
-      const fallbackColor = getNodeColor(node.type ?? "idea", theme);
-      if (node.minimized) {
-        return {
-          ...prev,
-          [id]: {
-            ...node,
-            minimized: false,
-            dotColor: undefined,
-          },
-        };
-      }
-      const paletteSize = minimizedPalette.length;
-      const randomColor =
-        minimizedPalette[Math.floor(Math.random() * Math.max(1, paletteSize))] ??
-        fallbackColor;
-      return {
-        ...prev,
-        [id]: {
-          ...node,
-          minimized: true,
-          dotColor: randomColor,
-        },
-      };
-    });
-  }, [theme]);
+  }, [commitFocus, resetPreviewPointerTracking]);
 
   // 重写的智能散布算法
   const arrangeAroundSmart = useCallback((centerX: number, centerY: number, childCount: number, parentId: string) => {
@@ -2471,6 +2479,7 @@ Respond with valid JSON only.`;
         size,
       } as PreviewPlaceholder;
     });
+    resetPreviewPointerTracking();
     setPreviewState({
       parentId: nodeId,
       placeholders,
@@ -2478,7 +2487,7 @@ Respond with valid JSON only.`;
       holdStartClient: null,
       pointerClient: null,
     });
-  }, [nodes, arrangeAroundSmart]);
+  }, [nodes, arrangeAroundSmart, resetPreviewPointerTracking]);
 
 
 
@@ -2737,7 +2746,7 @@ Respond with valid JSON only.`;
     [cancelNodeHold, clearPreview, openExpandOverlay, inputOverlay.open]
   );
 
-  const handleNodeHoldMove = ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
+  const handleNodeHoldMove = useCallback(({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
     const holdInfo = nodeHoldInfoRef.current;
     if (holdInfo && holdInfo.nodeId === nodeId && nodeHoldTimerRef.current !== null) {
       const dx = clientX - holdInfo.startClient.x;
@@ -2747,17 +2756,44 @@ Respond with valid JSON only.`;
       }
     }
 
-    setPreviewState((prev) => {
-      if (prev.parentId !== nodeId) return prev;
-      if (prev.pointerClient && prev.pointerClient.x === clientX && prev.pointerClient.y === clientY) {
-        return prev;
+    const current = previewStateRef.current;
+    if (current.parentId !== nodeId) return;
+
+    const applied = previewPointerAppliedRef.current;
+    if (applied && applied.nodeId === nodeId && applied.clientX === clientX && applied.clientY === clientY) {
+      return;
+    }
+
+    previewPointerPendingRef.current = { nodeId, clientX, clientY };
+    if (previewPointerFrameRef.current != null) {
+      return;
+    }
+
+    previewPointerFrameRef.current = requestAnimationFrame(() => {
+      previewPointerFrameRef.current = null;
+      const next = previewPointerPendingRef.current;
+      previewPointerPendingRef.current = null;
+      if (!next) return;
+      const latest = previewStateRef.current;
+      if (latest.parentId !== next.nodeId) return;
+      const pointer = latest.pointerClient;
+      if (pointer && pointer.x === next.clientX && pointer.y === next.clientY) {
+        previewPointerAppliedRef.current = next;
+        return;
       }
-      return {
-        ...prev,
-        pointerClient: { x: clientX, y: clientY },
-      };
+      previewPointerAppliedRef.current = next;
+      setPreviewState((prev) => {
+        if (prev.parentId !== next.nodeId) return prev;
+        if (prev.pointerClient && prev.pointerClient.x === next.clientX && prev.pointerClient.y === next.clientY) {
+          return prev;
+        }
+        return {
+          ...prev,
+          pointerClient: { x: next.clientX, y: next.clientY },
+        };
+      });
     });
-  };
+  }, [cancelNodeHold]);
 
   
   const handleNodeHoldEnd = useCallback(
@@ -3039,7 +3075,6 @@ Respond with valid JSON only.`;
               node={nodeForRender}
               onMove={onMove}
               onMoveEnd={onMoveEnd}
-              onMinimize={onMinimize}
               onContextMenu={onNodeContextMenu}
               highlight={selectedIds.has(n.id)}
               screenToCanvas={screenToCanvas}
@@ -3172,13 +3207,6 @@ Respond with valid JSON only.`;
                   Connect to Node
                 </button>
               )}
-              <button
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                onClick={() => handleNodeMenuAction('minimize', contextMenu.nodeId!)}
-              >
-                <MinimizeRoundedIcon fontSize="small" className="text-yellow-500" />
-                {nodes[contextMenu.nodeId]?.minimized ? 'Restore' : 'Minimize'}
-              </button>
               <button
                 className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
                 onClick={() => handleNodeMenuAction('delete', contextMenu.nodeId!)}
