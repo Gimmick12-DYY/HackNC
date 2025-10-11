@@ -2837,22 +2837,40 @@ Respond with valid JSON only.`;
 
         const parentBase = getBaseDiameter(parent);
         const childBase = getBaseDiameter(child);
+        // 实际可视直径（考虑注意力缩放）
+        const parentVisual = parent.minimized
+          ? VISUAL_NODE_MINIMIZED_SIZE
+          : getVisualDiameter(parent, distances[parent.id]);
+        const childVisual = child.minimized
+          ? VISUAL_NODE_MINIMIZED_SIZE
+          : getVisualDiameter(child, distances[child.id]);
 
         const pX = parent.x + parentBase / 2;
         const pY = parent.y + parentBase / 2;
         const cX = child.x + childBase / 2;
         const cY = child.y + childBase / 2;
 
+        // 从子指向父，端点裁剪到各自节点圆周
+        const dx = pX - cX;
+        const dy = pY - cY;
+        const d = Math.max(1, Math.hypot(dx, dy));
+        const ux = dx / d;
+        const uy = dy / d;
+        const x1 = cX + ux * (childVisual / 2);
+        const y1 = cY + uy * (childVisual / 2);
+        const x2 = pX - ux * (parentVisual / 2);
+        const y2 = pY - uy * (parentVisual / 2);
+
         const connectedToFocus =
           !!focusId && (parent.id === focusId || child.id === focusId);
 
-        return { pX, pY, cX, cY, key: `${p}-${c}`, connectedToFocus };
+        return { x1, y1, x2, y2, key: `${p}-${c}`, connectedToFocus };
       })
       .filter(Boolean) as Array<{
-        pX: number;
-        pY: number;
-        cX: number;
-        cY: number;
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
         key: string;
         connectedToFocus: boolean;
       }>;
@@ -2978,6 +2996,17 @@ Respond with valid JSON only.`;
             overflow: 'visible'
           }}
         >
+          <defs>
+            <marker id="arrow-default" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={linePalette.default.stroke} />
+            </marker>
+            <marker id="arrow-connected" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={linePalette.connected.stroke} />
+            </marker>
+            <marker id="arrow-dimmed" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={linePalette.dimmed.stroke} />
+            </marker>
+          </defs>
           {/* 中心点原点标记 */}
           <circle
             cx={0}
@@ -2997,26 +3026,31 @@ Respond with valid JSON only.`;
             fill={theme.canvas.origin.core}
           />
           
-          {lines.map(({ pX, pY, cX, cY, key, connectedToFocus }) => {
+          {lines.map(({ x1, y1, x2, y2, key, connectedToFocus }) => {
             const strokeColor = connectedToFocus
               ? linePalette.connected.stroke
               : hasFocusedNode
                 ? linePalette.dimmed.stroke
                 : linePalette.default.stroke;
+            const markerId = connectedToFocus
+              ? 'arrow-connected'
+              : hasFocusedNode
+                ? 'arrow-dimmed'
+                : 'arrow-default';
             return (
               <motion.line
                 key={key}
                 animate={{
-                  x1: pX,
-                  y1: pY,
-                  x2: cX,
-                  y2: cY,
+                  x1,
+                  y1,
+                  x2,
+                  y2,
                 }}
                 initial={{
-                  x1: pX,
-                  y1: pY,
-                  x2: cX,
-                  y2: cY,
+                  x1,
+                  y1,
+                  x2,
+                  y2,
                 }}
                 transition={
                   isDragging
@@ -3034,6 +3068,7 @@ Respond with valid JSON only.`;
                 style={{ 
                   vectorEffect: 'non-scaling-stroke' // 保持线条粗细不受缩放影响
                 }}
+                markerEnd={`url(#${markerId})`}
               />
             );
           })}
