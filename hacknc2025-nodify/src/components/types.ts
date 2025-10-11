@@ -93,3 +93,23 @@ export type DebateRecord = {
   promptNodes: DebateRequestNode[];
   sides: DebateSide[];
 };
+
+export type CollectorMode = "argument" | "counter" | "script" | "debate";
+
+export type CollectorState = {
+  argument: { main: NodeItem | null; evidences: NodeItem[] };
+  counter: { main: NodeItem | null; evidences: NodeItem[] };
+  script: { outline: NodeItem[] };
+  debate: { participants: NodeItem[] };
+  target: { section: CollectorMode; field: "main" | "evidence" | "outline" | "participants" };
+  pool: NodeItem[];
+};
+
+export type ThoughtEntry = {
+  id: string;
+  mode: CollectorMode;
+  createdAt: number;
+  title: string;
+  content?: string;
+  debate?: DebateRecord;
+};

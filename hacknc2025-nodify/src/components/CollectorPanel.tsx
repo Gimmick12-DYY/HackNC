@@ -3,16 +3,16 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { NodeItem } from "./types";
+import {
+  NodeItem,
+  CollectorState,
+  CollectorMode,
+  ThoughtEntry,
+  DebateRecord,
+  DebateRequestNode,
+} from "./types";
 import { useTheme, hexToRgba } from "./Themes";
-
-type CollectorState = {
-  argument: { main: NodeItem | null; evidences: NodeItem[] };
-  counter: { main: NodeItem | null; evidences: NodeItem[] };
-  script: { outline: NodeItem[] };
-  target: { section: 'argument' | 'counter' | 'script'; field: 'main' | 'evidence' | 'outline' };
-  pool: NodeItem[];
-};
+import { debateNodes } from "./debate";
 
 type Props = {
   width: number;
@@ -22,13 +22,21 @@ type Props = {
   onChangeState: (next: CollectorState) => void;
   selectionMode: boolean;
   onToggleSelectionMode: () => void;
-  onGenerateScript?: () => Promise<string>;
+  outputs: ThoughtEntry[];
+  activeOutputId: string | null;
+  onRecordOutput: (entry: ThoughtEntry) => void;
+  onSelectOutput: (id: string) => void;
 };
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 520;
 
-type DragListKey = "pool" | "argument-evidences" | "counter-evidences" | "script-outline";
+type DragListKey =
+  | "pool"
+  | "argument-evidences"
+  | "counter-evidences"
+  | "script-outline"
+  | "debate-participants";
 type DragSourceKey = DragListKey | "argument-main" | "counter-main";
 
 const DRAG_LIST_KEYS: readonly DragListKey[] = [
@@ -36,6 +44,7 @@ const DRAG_LIST_KEYS: readonly DragListKey[] = [
   "argument-evidences",
   "counter-evidences",
   "script-outline",
+  "debate-participants",
 ] as const;
 
 type DropIndicator =
@@ -62,7 +71,103 @@ const getNodeLabel = (node: NodeItem) =>
 const isListKey = (key: DragSourceKey): key is DragListKey =>
   DRAG_LIST_KEYS.includes(key as DragListKey);
 
-export default function CollectorPanel({ width, onResize, onClose, state, onChangeState, selectionMode, onToggleSelectionMode, onGenerateScript }: Props) {
+const createEntryId = () =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `thought-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+type DebateOutputCardProps = {
+  debate: DebateRecord;
+  textColor: string;
+  mutedColor: string;
+  borderColor: string;
+};
+
+const DebateOutputCard: React.FC<DebateOutputCardProps> = ({ debate, textColor, mutedColor, borderColor }) => (
+  <div className="space-y-3 text-[13px]" style={{ color: textColor }}>
+    <section>
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: mutedColor }}>
+        Summary
+      </div>
+      <p className="leading-relaxed">{debate.summary}</p>
+    </section>
+    {debate.keyInsights.length > 0 && (
+      <section>
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: mutedColor }}>
+          Key insights
+        </div>
+        <ul className="space-y-1 list-disc list-inside">
+          {debate.keyInsights.map((insight, index) => (
+            <li key={`${debate.id}-insight-${index}`} className="leading-snug">
+              {insight}
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+    {debate.sides.length > 0 && (
+      <section className="space-y-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: mutedColor }}>
+          Perspectives
+        </div>
+        {debate.sides.map((side) => (
+          <div key={`${debate.id}-${side.label}`} className="border rounded-md px-2 py-1.5 space-y-1" style={{ borderColor }}>
+            <div className="text-[12px] font-semibold">{side.label}: {side.stance}</div>
+            <div className="text-[12px] leading-snug">{side.summary}</div>
+          </div>
+        ))}
+      </section>
+    )}
+    <section>
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: mutedColor }}>
+        Verdict
+      </div>
+      <p className="leading-snug">{debate.verdict}</p>
+    </section>
+    {debate.recommendations.length > 0 && (
+      <section>
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: mutedColor }}>
+          Recommendations
+        </div>
+        <ul className="space-y-1 list-disc list-inside">
+          {debate.recommendations.map((rec, index) => (
+            <li key={`${debate.id}-rec-${index}`} className="leading-snug">
+              {rec}
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+    {debate.sources.length > 0 && (
+      <section>
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: mutedColor }}>
+          Sources
+        </div>
+        <ul className="space-y-1 list-disc list-inside">
+          {debate.sources.map((source, index) => (
+            <li key={`${debate.id}-source-${index}`} className="leading-snug break-words">
+              {source}
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+  </div>
+);
+
+export default function CollectorPanel({
+  width,
+  onResize,
+  onClose,
+  state,
+  onChangeState,
+  selectionMode,
+  onToggleSelectionMode,
+  outputs,
+  activeOutputId,
+  onRecordOutput,
+  onSelectOutput,
+}: Props) {
   const { theme } = useTheme();
   const sidebar = theme.ui.sidebar;
   const accent = sidebar.inputFocus;
@@ -81,6 +186,9 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
     },
     script: {
       outline: [...state.script.outline],
+    },
+    debate: {
+      participants: [...state.debate.participants],
     },
     target: { ...state.target },
     pool: [...state.pool],
@@ -102,6 +210,8 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
         return draft.counter.evidences;
       case "script-outline":
         return draft.script.outline;
+      case "debate-participants":
+        return draft.debate.participants;
       default:
         return draft.pool;
     }
@@ -112,12 +222,14 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
     draft.argument.evidences = draft.argument.evidences.filter((x) => x.id !== id);
     draft.counter.evidences = draft.counter.evidences.filter((x) => x.id !== id);
     draft.script.outline = draft.script.outline.filter((x) => x.id !== id);
+    draft.debate.participants = draft.debate.participants.filter((x) => x.id !== id);
     if (draft.argument.main?.id === id) draft.argument.main = null;
     if (draft.counter.main?.id === id) draft.counter.main = null;
   }, []);
 
   const [activeDrag, setActiveDrag] = React.useState<ActiveDragState | null>(null);
   const [dropIndicator, setDropIndicator] = React.useState<DropIndicator>(null);
+  const [generatingMode, setGeneratingMode] = React.useState<CollectorMode | null>(null);
 
   const dragDataRef = React.useRef<{ node: NodeItem; source: DragSourceKey; index: number | null } | null>(null);
   const pointerListenersRef = React.useRef<{
@@ -134,6 +246,7 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
     "argument-evidences": null,
     "counter-evidences": null,
     "script-outline": null,
+    "debate-participants": null,
   });
   const panelRef = React.useRef<HTMLDivElement | null>(null);
   const mainRefs = React.useRef<{ argument: HTMLDivElement | null; counter: HTMLDivElement | null }>({
@@ -147,6 +260,343 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
     dropIndicatorRef.current = null;
     setDropIndicator(null);
   }, [state.target.section]);
+
+  const buildNodeList = React.useCallback((items: NodeItem[]): string => {
+    return items.map((n, index) => `${index + 1}. ${getNodeLabel(n)}`).join("\n");
+  }, []);
+
+  const requestGeneration = React.useCallback(async (prompt: string): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          count: 1,
+          phraseLength: 12,
+          temperature: 0.7,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Generation failed (${res.status})`);
+      }
+      const data = await res.json();
+      const text =
+        Array.isArray(data.items) && data.items[0]
+          ? data.items[0].full || data.items[0].text || String(data.items[0])
+          : "";
+      const result = String(text || "").trim();
+      if (!result) {
+        throw new Error("No response generated");
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to generate content";
+      alert(message);
+      return null;
+    }
+  }, []);
+
+  const resolveNodeById = React.useCallback(
+    (id: string): NodeItem | null => {
+      if (state.argument.main?.id === id) return state.argument.main;
+      if (state.counter.main?.id === id) return state.counter.main;
+      const pools: NodeItem[][] = [
+        state.pool,
+        state.argument.evidences,
+        state.counter.evidences,
+        state.script.outline,
+        state.debate.participants,
+      ];
+      for (const list of pools) {
+        const match = list.find((node) => node.id === id);
+        if (match) return match;
+      }
+      return null;
+    },
+    [state]
+  );
+
+  const sendToPool = React.useCallback(
+    (id: string) => {
+      const node = resolveNodeById(id);
+      if (!node) return;
+      mutateState((draft) => {
+        detachNode(draft, id);
+        if (!draft.pool.find((n) => n.id === id)) {
+          draft.pool.unshift({ ...node });
+        }
+      });
+    },
+    [detachNode, mutateState, resolveNodeById]
+  );
+
+  const emitOutput = React.useCallback(
+    (mode: CollectorMode, payload: { title: string; content?: string; debate?: DebateRecord }) => {
+      const entry: ThoughtEntry = {
+        id: createEntryId(),
+        mode,
+        createdAt: Date.now(),
+        title: payload.title,
+        content: payload.content,
+        debate: payload.debate,
+      };
+      onRecordOutput(entry);
+      onSelectOutput(entry.id);
+    },
+    [onRecordOutput, onSelectOutput]
+  );
+
+  const ensureFieldForSection = React.useCallback(
+    (section: CollectorMode, field: CollectorState["target"]["field"]): CollectorState["target"]["field"] => {
+      switch (section) {
+        case "argument":
+          return field === "main" || field === "evidence" ? field : "evidence";
+        case "counter":
+          return "main";
+        case "script":
+          return "outline";
+        case "debate":
+          return "participants";
+        default:
+          return field;
+      }
+    },
+    []
+  );
+
+  const handleSelectSection = React.useCallback(
+    (section: CollectorMode) => {
+      onChangeState({
+        ...state,
+        target: {
+          section,
+          field: ensureFieldForSection(section, state.target.section === section ? state.target.field : "main"),
+        },
+      });
+    },
+    [ensureFieldForSection, onChangeState, state]
+  );
+
+  const modeLabels: Record<CollectorMode, string> = {
+    argument: "Argument",
+    counter: "Anti-Argument",
+    script: "Script",
+    debate: "Debate",
+  };
+  const modeOrder: CollectorMode[] = ["argument", "counter", "script", "debate"];
+
+  const modeOutputs = React.useMemo(
+    () => outputs.filter((entry) => entry.mode === state.target.section),
+    [outputs, state.target.section]
+  );
+
+  const handleGenerateArgument = React.useCallback(async () => {
+    if (generatingMode) return;
+    const main = state.argument.main;
+    if (!main) {
+      alert("Set an argument main point before generating.");
+      return;
+    }
+    const evidences = state.argument.evidences;
+    const prompt = [
+      "You are an assistant helping prepare a persuasive argument.",
+      `Main claim: ${getNodeLabel(main)}`,
+      "",
+      evidences.length > 0
+        ? `Supporting evidence:\n${buildNodeList(evidences)}`
+        : "Supporting evidence: none provided. Invent 3 credible, distinct evidences that strongly support the claim.",
+      "",
+      "Write an articulate persuasive explanation (around 200 words) backing the claim and list the supporting evidences afterwards as bullet points."
+    ].join("\n");
+    setGeneratingMode("argument");
+    try {
+      const text = await requestGeneration(prompt);
+      if (text) {
+        emitOutput("argument", {
+          title: `Argument • ${getNodeLabel(main)}`,
+          content: text,
+        });
+      }
+    } finally {
+      setGeneratingMode(null);
+    }
+  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.argument]);
+
+  const handleGenerateCounter = React.useCallback(async () => {
+    if (generatingMode) return;
+    const main = state.counter.main;
+    if (!main) {
+      alert("Set an anti-argument main point before generating.");
+      return;
+    }
+    const existing = state.counter.evidences;
+    const prompt = [
+      "Craft a compelling counter-argument to the following statement.",
+      `Target statement: ${getNodeLabel(main)}`,
+      "",
+      existing.length > 0
+        ? `Existing counter-evidences:\n${buildNodeList(existing)}`
+        : "No counter-evidences were supplied. Invent several credible evidences that undermine the target statement.",
+      "",
+      "Produce a compelling counter-argument (around 200 words) followed by bullet points listing the evidences you rely on."
+    ].join("\n");
+    setGeneratingMode("counter");
+    try {
+      const text = await requestGeneration(prompt);
+      if (text) {
+        emitOutput("counter", {
+          title: `Counterpoint • ${getNodeLabel(main)}`,
+          content: text,
+        });
+      }
+    } finally {
+      setGeneratingMode(null);
+    }
+  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.counter]);
+
+  const handleGenerateScript = React.useCallback(async () => {
+    if (generatingMode) return;
+    const outline = state.script.outline;
+    if (outline.length === 0) {
+      alert("Select nodes for the script outline before generating.");
+      return;
+    }
+    const prompt = [
+      "Write a descriptive, engaging narrative that follows the ordered outline points below.",
+      buildNodeList(outline),
+      "",
+      "Produce 2-3 flowing paragraphs (around 220 words) that clearly reference each outline point."
+    ].join("\n");
+    setGeneratingMode("script");
+    try {
+      const text = await requestGeneration(prompt);
+      if (text) {
+        emitOutput("script", {
+          title: "Script",
+          content: text,
+        });
+      }
+    } finally {
+      setGeneratingMode(null);
+    }
+  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.script.outline]);
+
+  const handleGenerateDebate = React.useCallback(async () => {
+    if (generatingMode) return;
+    const participants = state.debate.participants;
+    if (participants.length < 2) {
+      alert("Pick at least two participants before running a debate.");
+      return;
+    }
+    const inputs: DebateRequestNode[] = [];
+    const missing: string[] = [];
+    participants.forEach((node) => {
+      const full = (node.full ?? node.text ?? node.phrase ?? node.short ?? "").trim();
+      if (!full) {
+        missing.push(node.id);
+        return;
+      }
+      inputs.push({
+        id: node.id,
+        type: node.type ?? "idea",
+        full,
+        phrase: node.phrase?.trim() || undefined,
+        short: node.short?.trim() || undefined,
+      });
+    });
+    if (missing.length) {
+      alert("Some participants do not have enough content to debate.");
+      return;
+    }
+    setGeneratingMode("debate");
+    try {
+      const debate = await debateNodes(inputs, {});
+      emitOutput("debate", {
+        title: debate.topic || "Debate",
+        debate,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to generate debate";
+      alert(message);
+    } finally {
+      setGeneratingMode(null);
+    }
+  }, [emitOutput, generatingMode, state.debate.participants]);
+
+  const renderGenerateButton = (mode: CollectorMode) => {
+    const handler =
+      mode === "argument"
+        ? handleGenerateArgument
+        : mode === "counter"
+          ? handleGenerateCounter
+          : mode === "script"
+            ? handleGenerateScript
+            : handleGenerateDebate;
+    const busy = generatingMode === mode;
+    return (
+      <button
+        type="button"
+        onClick={handler}
+        disabled={busy}
+        className="flex items-center gap-2 text-xs rounded-full border px-3 py-1.5 shadow-sm transition-colors"
+        style={{
+          color: sidebar.textPrimary,
+          borderColor: accent,
+          background: busy ? accentBgHover : accentBg,
+          opacity: busy ? 0.75 : 1,
+          cursor: busy ? "not-allowed" : "pointer",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = accentBgHover;
+          (e.currentTarget as HTMLButtonElement).style.borderColor = accent;
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = accentBg;
+          (e.currentTarget as HTMLButtonElement).style.borderColor = accent;
+        }}
+      >
+        {busy ? (
+          <svg
+            className="w-4 h-4 animate-spin"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+            />
+          </svg>
+        ) : (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="w-4 h-4"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0 1 12 15a9.065 9.065 0 0 0-6.23-.693L5 14.5m14.8.8 1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0 1 12 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5"
+            />
+          </svg>
+        )}
+        <span>{busy ? "Generating..." : "Generate"}</span>
+      </button>
+    );
+  };
 
   const disableTextSelection = React.useCallback(() => {
     if (typeof document === "undefined") return;
@@ -414,7 +864,12 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
     window.addEventListener("pointercancel", handleCancel);
   }, [disableTextSelection, finishDrag, setActiveDragState, updateDropTarget]);
 
-  const DraggableChip: React.FC<{ node: NodeItem; source: DragSourceKey; index?: number }> = ({ node, source, index }) => {
+  const DraggableChip: React.FC<{
+    node: NodeItem;
+    source: DragSourceKey;
+    index?: number;
+    onReturnToPool?: () => void;
+  }> = ({ node, source, index, onReturnToPool }) => {
     const isActive = activeDrag?.node.id === node.id;
     return (
       <div
@@ -429,7 +884,12 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
           visibility: isActive ? "hidden" : "visible",
           pointerEvents: isActive ? "none" : "auto",
         }}
-      >
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onReturnToPool?.();
+        }}
+        >
         {getNodeLabel(node)}
       </div>
     );
@@ -505,11 +965,29 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={onToggleSelectionMode} className="text-sm rounded-full border px-3 py-1.5 transition-colors shadow-sm"
+          <button
+            type="button"
+            onClick={onToggleSelectionMode}
+            className="text-sm rounded-full border px-3 py-1.5 transition-colors shadow-sm flex items-center gap-2"
             style={{ color: sidebar.headerText, borderColor: selectionMode ? accent : sidebar.cardBorder, background: selectionMode ? accentBg : sidebar.cardBackground }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = selectionMode ? accentBgHover : accentBg; (e.currentTarget as HTMLButtonElement).style.borderColor = accent; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = selectionMode ? accentBg : sidebar.cardBackground; (e.currentTarget as HTMLButtonElement).style.borderColor = selectionMode ? accent : sidebar.cardBorder; }}>
-            {selectionMode ? "Selecting…" : "Select nodes"}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-4 h-4"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672ZM12 2.25V4.5m5.834.166-1.591 1.591M20.25 10.5H18M7.757 14.743l-1.59 1.59M6 10.5H3.75m4.007-4.243-1.59-1.59"
+              />
+            </svg>
+            <span>{selectionMode ? "Selecting…" : "Select nodes"}</span>
           </button>
           <button type="button" onClick={onClose} className="text-sm rounded-full border px-3 py-1.5 transition-colors shadow-sm"
             style={{ color: sidebar.headerText, borderColor: sidebar.cardBorder, background: sidebar.cardBackground }}>Hide</button>
@@ -519,42 +997,73 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
       <div className="flex-1 overflow-auto p-3 space-y-3">
         {/* Pool (drag from here) */}
         <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
-          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Collected Nodes (Drag to sections)</div>
-          {state.pool.length === 0 ? (
-            <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(none yet)</div>
-          ) : (
-            <div
-              ref={(el) => { listRefs.current["pool"] = el; }}
-              className="flex flex-col gap-2"
-            >
-              {state.pool.map((n, idx) => (
-                <React.Fragment key={n.id}>
-                  {dropIndicator?.kind === "list" && dropIndicator.list === "pool" && dropIndicator.index === idx && (
-                    <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
-                  )}
-                  <div>
-                    <DraggableChip node={n} source="pool" index={idx} />
-                  </div>
-                </React.Fragment>
-              ))}
-              {dropIndicator?.kind === "list" && dropIndicator.list === "pool" && dropIndicator.index === state.pool.length && (
-                <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
-              )}
-              {state.pool.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "pool" && (
-                <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
-              )}
-            </div>
-          )}
+          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Collected Nodes</div>
+          <div
+            ref={(el) => { listRefs.current["pool"] = el; }}
+            className="border rounded-md p-2 min-h-[72px] transition-colors"
+            style={{
+              borderColor: dropIndicator?.kind === "list" && dropIndicator.list === "pool" ? accent : sidebar.cardBorder,
+              background:
+                dropIndicator?.kind === "list" && dropIndicator.list === "pool"
+                  ? accentBg
+                  : sidebar.inputBackground,
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              const id = event.dataTransfer.getData("application/x-node-id");
+              if (!id) return;
+              sendToPool(id);
+            }}
+          >
+            {state.pool.length === 0 ? (
+              <div className="text-[13px]" style={{ color: sidebar.textMuted }}>
+                (drop or select nodes to collect them here)
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {state.pool.map((n, idx) => (
+                  <React.Fragment key={n.id}>
+                    {dropIndicator?.kind === "list" && dropIndicator.list === "pool" && dropIndicator.index === idx && (
+                      <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                    )}
+                    <div>
+                      <DraggableChip node={n} source="pool" index={idx} />
+                    </div>
+                  </React.Fragment>
+                ))}
+                {dropIndicator?.kind === "list" && dropIndicator.list === "pool" && dropIndicator.index === state.pool.length && (
+                  <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                )}
+              </div>
+            )}
+          </div>
         </div>
         {/* Section tabs */}
-        <div className="flex gap-2">
-          {(['argument','counter','script'] as const).map((sec) => (
-            <button key={sec} type="button" className="text-xs rounded-full border px-3 py-1.5 shadow-sm"
-              onClick={() => onChangeState({ ...state, target: { section: sec, field: sec==='script' ? 'outline' : (state.target.field==='outline' ? 'evidence' : state.target.field) } })}
-              style={{ color: sidebar.textPrimary, borderColor: state.target.section===sec ? accent : sidebar.cardBorder, background: state.target.section===sec ? accentBg : sidebar.cardBackground }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = accentBg; (e.currentTarget as HTMLButtonElement).style.borderColor = accent; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = state.target.section===sec ? accentBg : sidebar.cardBackground; (e.currentTarget as HTMLButtonElement).style.borderColor = state.target.section===sec ? accent : sidebar.cardBorder; }}>
-              {sec === 'argument' ? 'Argument' : sec === 'counter' ? 'Anti-Argument' : 'Script'}
+        <div className="flex flex-wrap gap-2">
+          {modeOrder.map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className="text-xs rounded-full border px-3 py-1.5 shadow-sm"
+              onClick={() => handleSelectSection(mode)}
+              style={{
+                color: sidebar.textPrimary,
+                borderColor: state.target.section === mode ? accent : sidebar.cardBorder,
+                background: state.target.section === mode ? accentBg : sidebar.cardBackground,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = accentBg;
+                (e.currentTarget as HTMLButtonElement).style.borderColor = accent;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  state.target.section === mode ? accentBg : sidebar.cardBackground;
+                (e.currentTarget as HTMLButtonElement).style.borderColor =
+                  state.target.section === mode ? accent : sidebar.cardBorder;
+              }}
+            >
+              {modeLabels[mode]}
             </button>
           ))}
         </div>
@@ -562,7 +1071,10 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
         {/* Argument Section */}
         {state.target.section === "argument" && (
           <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
-          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Argument</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs uppercase tracking-wide" style={{ color: sidebar.textMuted }}>Argument</div>
+            {renderGenerateButton("argument")}
+          </div>
           <div className="space-y-2">
             <div
               ref={(el) => { mainRefs.current.argument = el; }}
@@ -575,7 +1087,11 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Main Point</div>
               {state.argument.main ? (
                 <div className="mt-1 text-[13px]" style={{ color: sidebar.textPrimary }}>
-                  <DraggableChip node={state.argument.main} source="argument-main" />
+                  <DraggableChip
+                    node={state.argument.main}
+                    source="argument-main"
+                    onReturnToPool={() => sendToPool(state.argument.main!.id)}
+                  />
                 </div>
               ) : (
                 <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select a node as main)</div>
@@ -618,7 +1134,7 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
                         <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
                       )}
                       <div>
-                        <DraggableChip node={n} source="argument-evidences" index={idx} />
+                        <DraggableChip node={n} source="argument-evidences" index={idx} onReturnToPool={() => sendToPool(n.id)} />
                       </div>
                     </React.Fragment>
                   ))
@@ -630,7 +1146,9 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
                   <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
                 )}
               </div>
-              {/* Drop instead of button */}
+              <div className="text-[11px] mt-2" style={{ color: sidebar.textMuted }}>
+                Double-click any chip to move it back to Collected Nodes.
+              </div>
             </div>
           </div>
         </div>
@@ -639,7 +1157,10 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
         {/* Anti-Argument Section */}
         {state.target.section === "counter" && (
           <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
-          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Anti-Argument</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs uppercase tracking-wide" style={{ color: sidebar.textMuted }}>Anti-Argument</div>
+            {renderGenerateButton("counter")}
+          </div>
           <div className="space-y-2">
             <div
               ref={(el) => { mainRefs.current.counter = el; }}
@@ -652,62 +1173,15 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Main Point</div>
               {state.counter.main ? (
                 <div className="mt-1 text-[13px]" style={{ color: sidebar.textPrimary }}>
-                  <DraggableChip node={state.counter.main} source="counter-main" />
+                  <DraggableChip
+                    node={state.counter.main}
+                    source="counter-main"
+                    onReturnToPool={() => sendToPool(state.counter.main!.id)}
+                  />
                 </div>
               ) : (
                 <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select a node as main)</div>
               )}
-              {/* Handle drop to set or replace main; push previous main to pool */}
-              <div
-                onDragOver={(e)=>e.preventDefault()}
-                onDrop={(e)=>{
-                  const id = e.dataTransfer.getData('application/x-node-id');
-                  if (!id) return;
-                  const incoming = (state.pool.find(x=>x.id===id) || state.argument.evidences.find(x=>x.id===id) || state.counter.evidences.find(x=>x.id===id) || state.script.outline.find(x=>x.id===id) || (state.argument.main?.id===id ? state.argument.main : null) || (state.counter.main?.id===id ? state.counter.main : null));
-                  if (!incoming) return;
-                  const prev = state.counter.main;
-                  const next = { ...state };
-                  // detach incoming from all
-                  next.pool = next.pool.filter(x=>x.id!==id);
-                  next.argument.evidences = next.argument.evidences.filter(x=>x.id!==id);
-                  next.counter.evidences = next.counter.evidences.filter(x=>x.id!==id);
-                  next.script.outline = next.script.outline.filter(x=>x.id!==id);
-                  if (next.argument.main?.id===id) next.argument.main = null;
-                  next.counter.main = incoming;
-                  // return previous main to pool
-                  if (prev && !next.pool.find(x=>x.id===prev.id)) next.pool = [...next.pool, prev];
-                  onChangeState(next);
-                }}
-              />
-            </div>
-            <div className="border rounded-md p-2" style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }}>
-              <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Evidences</div>
-              <div
-                ref={(el) => { listRefs.current["counter-evidences"] = el; }}
-                className="flex flex-col gap-2 min-h-[32px]"
-              >
-                {state.counter.evidences.length === 0 ? (
-                  <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select nodes as evidences)</div>
-                ) : (
-                  state.counter.evidences.map((n, idx) => (
-                    <React.Fragment key={n.id}>
-                      {dropIndicator?.kind === "list" && dropIndicator.list === "counter-evidences" && dropIndicator.index === idx && (
-                        <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
-                      )}
-                      <div>
-                        <DraggableChip node={n} source="counter-evidences" index={idx} />
-                      </div>
-                    </React.Fragment>
-                  ))
-                )}
-                {state.counter.evidences.length > 0 && dropIndicator?.kind === "list" && dropIndicator.list === "counter-evidences" && dropIndicator.index === state.counter.evidences.length && (
-                  <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
-                )}
-                {state.counter.evidences.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "counter-evidences" && (
-                  <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
-                )}
-              </div>
-              {/* Drop instead of button */}
             </div>
           </div>
         </div>
@@ -716,7 +1190,10 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
         {/* Script Generation Section */}
         {state.target.section === "script" && (
           <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
-          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Script Generation</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs uppercase tracking-wide" style={{ color: sidebar.textMuted }}>Script Generation</div>
+            {renderGenerateButton("script")}
+          </div>
           <div
             ref={(el) => { listRefs.current["script-outline"] = el; }}
             className="flex flex-col gap-2 min-h-[32px]"
@@ -730,7 +1207,7 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
                     <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
                   )}
                   <div>
-                    <DraggableChip node={n} source="script-outline" index={idx} />
+                    <DraggableChip node={n} source="script-outline" index={idx} onReturnToPool={() => sendToPool(n.id)} />
                   </div>
                 </React.Fragment>
               ))
@@ -741,18 +1218,94 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
             {state.script.outline.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "script-outline" && (
               <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
             )}
-          </div>
-          <div className="mt-2 flex gap-2">
-            <button type="button" className="text-xs rounded-full border px-3 py-1.5 shadow-sm" style={{ color: sidebar.textPrimary, borderColor: accent, background: accentBg }} onClick={() => onChangeState({ ...state, target: { section: 'script', field: 'outline' } })}>Add Outline Item (select mode)</button>
-            {onGenerateScript && (
-              <button type="button" className="text-xs rounded-full border px-3 py-1.5 shadow-sm" style={{ color: sidebar.textPrimary, borderColor: accent, background: accentBg }} onClick={async ()=>{
-                const script = await onGenerateScript();
-                if (script) alert(script);
-              }}>Generate Script</button>
-            )}
+            <div className="text-[11px] mt-2" style={{ color: sidebar.textMuted }}>
+              Double-click any chip to move it back to Collected Nodes.
+            </div>
           </div>
         </div>
         )}
+
+        {/* Debate Section */}
+        {state.target.section === "debate" && (
+          <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs uppercase tracking-wide" style={{ color: sidebar.textMuted }}>Debate</div>
+              {renderGenerateButton("debate")}
+            </div>
+            <p className="text-[12px] mb-2" style={{ color: sidebar.textMuted }}>
+              Drop nodes to add them as debate participants. Double-click a chip to send it back to the pool.
+            </p>
+            <div
+              ref={(el) => { listRefs.current["debate-participants"] = el; }}
+              className="flex flex-col gap-2 min-h-[48px] border rounded-md p-2"
+              style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }}
+            >
+              {state.debate.participants.length === 0 ? (
+                <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(add at least two participants)</div>
+              ) : (
+                state.debate.participants.map((n, idx) => (
+                  <React.Fragment key={n.id}>
+                    {dropIndicator?.kind === "list" && dropIndicator.list === "debate-participants" && dropIndicator.index === idx && (
+                      <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                    )}
+                    <div>
+                      <DraggableChip node={n} source="debate-participants" index={idx} onReturnToPool={() => sendToPool(n.id)} />
+                    </div>
+                  </React.Fragment>
+                ))
+              )}
+              {state.debate.participants.length > 0 && dropIndicator?.kind === "list" && dropIndicator.list === "debate-participants" && dropIndicator.index === state.debate.participants.length && (
+                <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+              )}
+              {state.debate.participants.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "debate-participants" && (
+                <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Output Section */}
+        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
+          <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Output</div>
+          {modeOutputs.length === 0 ? (
+            <div className="text-[13px]" style={{ color: sidebar.textMuted }}>No outputs yet. Generate something to see it here.</div>
+          ) : (
+            <div className="space-y-3">
+              {modeOutputs.map((entry) => (
+                <article
+                  key={entry.id}
+                  onClick={() => onSelectOutput(entry.id)}
+                  className="rounded-lg border p-3 cursor-pointer transition-colors"
+                  style={{
+                    borderColor: activeOutputId === entry.id ? accent : sidebar.cardBorder,
+                    background: activeOutputId === entry.id ? hexToRgba(accent, 0.14) : sidebar.inputBackground,
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="text-sm font-semibold" style={{ color: sidebar.textPrimary }}>
+                      {entry.title}
+                    </div>
+                    <div className="text-[11px]" style={{ color: sidebar.textSecondary }}>
+                      {new Date(entry.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                  {entry.mode === "debate" && entry.debate ? (
+                    <DebateOutputCard
+                      debate={entry.debate}
+                      textColor={sidebar.textPrimary}
+                      mutedColor={sidebar.textSecondary}
+                      borderColor={sidebar.cardBorder}
+                    />
+                  ) : (
+                    <p className="text-[13px] leading-relaxed whitespace-pre-wrap" style={{ color: sidebar.textPrimary }}>
+                      {entry.content}
+                    </p>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </motion.div>
       {activeDrag && typeof document !== "undefined" &&

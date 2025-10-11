@@ -12,13 +12,10 @@ import {
   NodeGraph,
   NodeData,
   DebateRecord,
-  DebateRequestNode,
-  NodeInfoSummary,
 } from "./types";
 import { getVisualDiameter, VISUAL_NODE_MINIMIZED_SIZE } from "@/utils/getVisualDiameter";
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import { DisjointSet } from "@/utils/disjointSet";
-import { debateNodes } from "./debate";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
@@ -36,8 +33,6 @@ type Props = {
   onRequestInfo?: (info: InfoData | null) => void;
   onDebateHistoryUpdate?: (history: DebateRecord[]) => void;
   registerDebateActions?: (actions: { deleteDebate: (id: string) => void }) => void;
-  // Collector integration
-  onCollectorToggleSelect?: () => void;
   collectorSelectionMode?: boolean;
   onCollectorPickNode?: (n: NodeItem) => void;
 };
@@ -161,7 +156,7 @@ const NODE_HOLD_MOVE_THRESHOLD = 24;
 const PREVIEW_PLACEHOLDER_SIZE = 150;
 const MAX_GENERATED_COUNT = 12;
 
-export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, registerDebateActions, onCollectorToggleSelect, collectorSelectionMode = false, onCollectorPickNode }: Props) {
+export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, registerDebateActions, collectorSelectionMode = false, onCollectorPickNode }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [groupAssignments, setGroupAssignments] = useState<Record<string, string>>({});
@@ -173,14 +168,10 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
   const [multiSelectMenu, setMultiSelectMenu] = useState<MultiSelectMenuState | null>(null);
   const multiSelectMenuRef = useRef<HTMLDivElement | null>(null);
   const shiftPressedRef = useRef(false);
-  const debateAbortRef = useRef<AbortController | null>(null);
   // 多选：用 Set 存储所有选中节点
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectedIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
-  useEffect(() => () => {
-    debateAbortRef.current?.abort();
-  }, []);
   const committedFocusIdRef = useRef<string | null>(null);
   const hoveredNodeIdRef = useRef<string | null>(null);
   const hoverClearTimerRef = useRef<number | null>(null);
@@ -1741,95 +1732,6 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
     commitFocus(parentId);
   }, [commitFocus, connectNodes, showSnack]);
 
-  const handleDebateSelectedNodes = useCallback(async () => {
-    const ids = Array.from(selectedIdsRef.current);
-    if (ids.length < 2) {
-      showSnack("Select at least two nodes to debate", "warning");
-      return;
-    }
-    const uniqueIds = Array.from(new Set(ids));
-    const nodeInputs: DebateRequestNode[] = [];
-    const missing: string[] = [];
-    uniqueIds.forEach((id) => {
-      const node = nodesRef.current[id];
-      if (!node) {
-        missing.push(id);
-        return;
-      }
-      const full =
-        (node.full ?? node.text ?? node.phrase ?? node.short ?? "").trim();
-      if (!full) {
-        missing.push(id);
-        return;
-      }
-      nodeInputs.push({
-        id: node.id,
-        type: node.type ?? "idea",
-        full,
-        phrase: node.phrase?.trim() || undefined,
-        short: node.short?.trim() || undefined,
-      });
-    });
-    if (missing.length) {
-      showSnack(
-        `Unable to debate ${missing.length} selected node${
-          missing.length > 1 ? "s" : ""
-        } with empty content`,
-        "warning"
-      );
-      return;
-    }
-    if (nodeInputs.length < 2) {
-      showSnack("Need at least two populated nodes to debate", "warning");
-      return;
-    }
-    setMultiSelectMenu(null);
-    debateAbortRef.current?.abort();
-    const controller = new AbortController();
-    debateAbortRef.current = controller;
-    showSnack("Generating debate summary...", "info");
-    try {
-      const debate = await debateNodes(nodeInputs, {
-        signal: controller.signal,
-      });
-      setDebateHistory((prev) => ({
-        ...prev,
-        [debate.id]: debate,
-      }));
-      if (onRequestInfo) {
-        const infoNodes: Record<string, NodeInfoSummary> = {};
-        nodeInputs.forEach((item) => {
-          const source = nodesRef.current[item.id];
-          if (!source) return;
-          infoNodes[item.id] = {
-            id: source.id,
-            text: source.full || source.text || "",
-            parentId: source.parentId ?? null,
-            children: [...source.children],
-          };
-        });
-        onRequestInfo({
-          mode: "debate",
-          rootId: uniqueIds[0] ?? null,
-          nodes: infoNodes,
-          edges: [],
-          debate,
-        });
-      }
-      showSnack("Debate ready in the comparison panel", "success");
-    } catch (error) {
-      if ((error as Error)?.name === "AbortError") {
-        showSnack("Debate request cancelled", "info");
-      } else {
-        const message =
-          error instanceof Error ? error.message : "Failed to run debate";
-        showSnack(message, "error");
-      }
-    } finally {
-      debateAbortRef.current = null;
-    }
-  }, [showSnack, onRequestInfo]);
-
   // 点击节点：单选并打开信息
   const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
     // Collector selection mode: collect and exit early
@@ -1837,6 +1739,7 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
       const node = nodes[id];
       if (node) {
         onCollectorPickNode?.(node);
+        showSnack(`Collected "${node.full || node.text || node.phrase || node.short || node.id}"`, "success");
       }
       event?.stopPropagation();
       return;
@@ -1872,7 +1775,7 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
     const s = new Set<string>([id]);
     setSelectedIds(s);
     commitFocus(id);
-  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection, collectorSelectionMode, nodes, onCollectorPickNode]);
+  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection, collectorSelectionMode, nodes, onCollectorPickNode, showSnack]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
@@ -3241,12 +3144,6 @@ Respond with valid JSON only.`;
               onClick={connectSelectedNodes}
             >
               <span>Connect Selected</span>
-            </button>
-            <button
-              className="w-full px-3 py-2 rounded-md text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
-              onClick={handleDebateSelectedNodes}
-            >
-              <span>Run Debate</span>
             </button>
           </div>
         </div>,

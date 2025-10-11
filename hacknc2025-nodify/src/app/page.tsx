@@ -1,14 +1,35 @@
-"use client";
+﻿"use client";
 
 import React from "react";
 import Canvas from "@/components/Canvas";
 import Dashboard from "@/components/Dashboard";
 import CompareSection from "@/components/CompareSection";
 import CollectorPanel from "@/components/CollectorPanel";
-import { DashboardParams, DebateRecord, InfoData, NodeItem } from "@/components/types";
+import {
+  DashboardParams,
+  InfoData,
+  CollectorState,
+  CollectorMode,
+  ThoughtEntry,
+  NodeItem,
+} from "@/components/types";
 import { AttentionProvider } from "@/components/Attention";
 import { ThemeProvider, useTheme, Themes, hexToRgba } from "@/components/Themes";
 import InfoRoundedIcon from "@mui/icons-material/InfoRounded";
+
+const MODE_LABELS: Record<CollectorMode, string> = {
+  argument: "Argument",
+  counter: "Anti-Argument",
+  script: "Script",
+  debate: "Debate",
+};
+
+const DEFAULT_FIELD_BY_MODE: Record<CollectorMode, CollectorState["target"]["field"]> = {
+  argument: "evidence",
+  counter: "main",
+  script: "outline",
+  debate: "participants",
+};
 
 function HomeContent() {
   const { theme } = useTheme();
@@ -22,31 +43,95 @@ function HomeContent() {
   const [collectorOpen, setCollectorOpen] = React.useState(false);
   const [collectorWidth, setCollectorWidth] = React.useState(360);
   const [collectorSelectionMode, setCollectorSelectionMode] = React.useState(false);
-  type CollectedBucket = { main: NodeItem | null; evidences: NodeItem[] };
-  type CollectorState = {
-    argument: CollectedBucket;
-    counter: CollectedBucket;
-    script: { outline: NodeItem[] };
-    target: { section: 'argument' | 'counter' | 'script'; field: 'main' | 'evidence' | 'outline' };
-    pool: NodeItem[];
-  };
-  const [collector, setCollector] = React.useState<CollectorState>({
+  const defaultCollectorState: CollectorState = {
     argument: { main: null, evidences: [] },
     counter: { main: null, evidences: [] },
     script: { outline: [] },
+    debate: { participants: [] },
     target: { section: 'argument', field: 'evidence' },
     pool: [],
-  });
+  };
+  const [collector, setCollector] = React.useState<CollectorState>(defaultCollectorState);
   const [infoOpen, setInfoOpen] = React.useState(false);
   const [infoWidth, setInfoWidth] = React.useState(320);
-  const [debateHistory, setDebateHistory] = React.useState<DebateRecord[]>([]);
-  const [debateSummaryOpen, setDebateSummaryOpen] = React.useState(false);
-  const debateActionsRef = React.useRef<{ deleteDebate: (id: string) => void } | null>(null);
+  const [thoughtHistory, setThoughtHistory] = React.useState<ThoughtEntry[]>([]);
+  const [activeThoughtId, setActiveThoughtId] = React.useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
 
   const generateButtonRef = React.useRef<HTMLButtonElement>(null);
   const infoButtonRef = React.useRef<HTMLButtonElement>(null);
-  const debateButtonRef = React.useRef<HTMLButtonElement | null>(null);
-  const debatePopoverRef = React.useRef<HTMLDivElement | null>(null);
+  const historyButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const historyPopoverRef = React.useRef<HTMLDivElement | null>(null);
+
+  const handleRecordThought = React.useCallback((entry: ThoughtEntry) => {
+    setThoughtHistory((prev) => [entry, ...prev]);
+    setActiveThoughtId(entry.id);
+  }, []);
+
+  const handleSelectOutput = React.useCallback((id: string) => {
+    setActiveThoughtId(id);
+  }, []);
+
+  const handleAssignCollectorNode = React.useCallback((node: NodeItem) => {
+    setCollector((prev) => {
+      // Check if node already exists anywhere in the collector
+      const existsInPool = prev.pool.some((item) => item.id === node.id);
+      if (existsInPool) {
+        return prev;
+      }
+
+      // Clone the node to avoid mutation issues
+      const clone: NodeItem = {
+        ...node,
+        children: [...node.children],
+      };
+
+      // Remove the node from any other location
+      const strip = (items: NodeItem[]) => items.filter((item) => item.id !== node.id);
+
+      return {
+        argument: {
+          main: prev.argument.main?.id === node.id ? null : prev.argument.main,
+          evidences: strip(prev.argument.evidences),
+        },
+        counter: {
+          main: prev.counter.main?.id === node.id ? null : prev.counter.main,
+          evidences: strip(prev.counter.evidences),
+        },
+        script: {
+          outline: strip(prev.script.outline),
+        },
+        debate: {
+          participants: strip(prev.debate.participants),
+        },
+        target: prev.target,
+        pool: [clone, ...prev.pool],
+      };
+    });
+    setCollectorOpen(true);
+    setCollectorSelectionMode(false);
+  }, []);
+
+  const handleHistoryDelete = React.useCallback((id: string) => {
+    setThoughtHistory((prev) => prev.filter((entry) => entry.id !== id));
+    setActiveThoughtId((current) => (current === id ? null : current));
+  }, []);
+
+  const handleHistoryLoad = React.useCallback(
+    (entry: ThoughtEntry) => {
+      setCollector((prev) => ({
+        ...prev,
+        target: {
+          section: entry.mode,
+          field: DEFAULT_FIELD_BY_MODE[entry.mode],
+        },
+      }));
+      setActiveThoughtId(entry.id);
+      setCollectorOpen(true);
+      setHistoryOpen(false);
+    },
+    [setCollectorOpen, setCollector]
+  );
   const prevInfoRef = React.useRef<InfoData | null>(null);
 
   React.useEffect(() => {
@@ -71,22 +156,22 @@ function HomeContent() {
   }, [info, infoOpen]);
 
   React.useEffect(() => {
-    if (!debateSummaryOpen) return;
+    if (!historyOpen) return;
     const handleOutside = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
       if (
-        debatePopoverRef.current &&
-        !debatePopoverRef.current.contains(target) &&
-        debateButtonRef.current &&
-        !debateButtonRef.current.contains(target)
+        historyPopoverRef.current &&
+        !historyPopoverRef.current.contains(target) &&
+        historyButtonRef.current &&
+        !historyButtonRef.current.contains(target)
       ) {
-        setDebateSummaryOpen(false);
+        setHistoryOpen(false);
       }
     };
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setDebateSummaryOpen(false);
+        setHistoryOpen(false);
       }
     };
     document.addEventListener("mousedown", handleOutside);
@@ -95,7 +180,7 @@ function HomeContent() {
       document.removeEventListener("mousedown", handleOutside);
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [debateSummaryOpen]);
+  }, [historyOpen]);
 
   const header = theme.ui.header;
   const generateButton = theme.ui.generateButton;
@@ -111,31 +196,6 @@ function HomeContent() {
   const debateCardBackground = hexToRgba(theme.node.palette.default, 0.08);
   const debateCardBorder = hexToRgba(theme.node.palette.default, 0.18);
 
-  const handleDebateDelete = React.useCallback(
-    (id: string) => {
-      debateActionsRef.current?.deleteDebate(id);
-    },
-    []
-  );
-
-  const handleDebateLoad = React.useCallback(
-    (debate: DebateRecord) => {
-      setInfo({
-        mode: "debate",
-        rootId: debate.promptNodes[0]?.id ?? null,
-        nodes: {},
-        edges: [],
-        debate,
-      });
-      setInfoOpen(true);
-      setDebateSummaryOpen(false);
-    },
-    []
-  );
-
-  const handleRegisterDebateActions = React.useCallback((actions: { deleteDebate: (id: string) => void }) => {
-    debateActionsRef.current = actions;
-  }, []);
   return (
     <div
       className="min-h-screen w-full flex flex-col"
@@ -163,13 +223,13 @@ function HomeContent() {
         >
           <span>Be Inspired</span>
           <button
-            ref={debateButtonRef}
+            ref={historyButtonRef}
             type="button"
-            onClick={() => setDebateSummaryOpen((prev) => !prev)}
+            onClick={() => setHistoryOpen((prev) => !prev)}
             aria-haspopup="dialog"
-            aria-expanded={debateSummaryOpen}
+            aria-expanded={historyOpen}
             className="rounded-full border border-transparent p-2 transition-colors hover:border-slate-400/60 hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/70"
-            title="Show debate summaries"
+            title="Show thinking history"
             style={{ color: header.text }}
           >
             <svg
@@ -189,11 +249,11 @@ function HomeContent() {
             </svg>
           </button>
           <Themes />
-          {debateSummaryOpen && (
+          {historyOpen && (
             <div
-              ref={debatePopoverRef}
+              ref={historyPopoverRef}
               role="dialog"
-              aria-label="Stored debate summaries"
+              aria-label="Thinking history"
               className="absolute right-0 top-12 w-80 max-h-[70vh] overflow-y-auto rounded-2xl border shadow-xl backdrop-blur p-4 space-y-3"
               style={{
                 background: sidebar.cardBackground,
@@ -203,33 +263,29 @@ function HomeContent() {
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold">Debate Summaries</div>
-                  <div
-                    className="text-[11px]"
-                    style={{ color: sidebar.textSecondary }}
-                  >
-                    {debateHistory.length} saved debate
-                    {debateHistory.length === 1 ? "" : "s"}
+                  <div className="text-sm font-semibold">Thinking history</div>
+                  <div className="text-[11px]" style={{ color: sidebar.textSecondary }}>
+                    {thoughtHistory.length} saved {thoughtHistory.length === 1 ? "entry" : "entries"}
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setDebateSummaryOpen(false)}
+                  onClick={() => setHistoryOpen(false)}
                   className="text-xs font-medium px-2 py-1 rounded-md border transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-slate-500/70"
                   style={{ borderColor: sidebar.cardBorder, color: sidebar.textSecondary }}
                 >
                   Close
                 </button>
               </div>
-              {debateHistory.length === 0 ? (
+              {thoughtHistory.length === 0 ? (
                 <p className="text-xs" style={{ color: sidebar.textSecondary }}>
-                  No debates yet. Select multiple nodes and choose &ldquo;Run Debate&rdquo; to generate one.
+                  No thoughts captured yet. Generate an argument, counterpoint, script, or debate to see it here.
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {debateHistory.map((debate) => (
+                  {thoughtHistory.map((entry) => (
                     <article
-                      key={debate.id}
+                      key={entry.id}
                       className="rounded-xl border px-3 py-3 space-y-2"
                       style={{
                         background: debateCardBackground,
@@ -237,29 +293,20 @@ function HomeContent() {
                       }}
                     >
                       <div className="flex items-start gap-3">
-                        <div className="flex-1">
-                          <div className="text-sm font-semibold">{debate.topic}</div>
-                          <div
-                            className="text-[11px]"
-                            style={{ color: sidebar.textSecondary }}
-                          >
-                            Generated {new Date(debate.createdAt).toLocaleString()}
-                          </div>
-                          <div
-                            className="text-[11px] whitespace-nowrap mt-2"
-                            style={{ color: sidebar.textSecondary }}
-                          >
-                            {debate.promptNodes.length} nodes
+                        <div className="flex-1 space-y-1">
+                          <div className="text-sm font-semibold">{entry.title}</div>
+                          <div className="text-[11px]" style={{ color: sidebar.textSecondary }}>
+                            {MODE_LABELS[entry.mode]} - {new Date(entry.createdAt).toLocaleString()}
                           </div>
                         </div>
                         <div className="flex flex-col items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => handleDebateLoad(debate)}
+                            onClick={() => handleHistoryLoad(entry)}
                             className="rounded-full p-1.5 border transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-slate-500/70"
                             style={{ borderColor: sidebar.cardBorder, color: sidebar.textSecondary }}
-                            aria-label="Load debate summary"
-                            title="Load debate summary"
+                            aria-label="Load entry into collector"
+                            title="Load entry into collector"
                           >
                             <svg
                               xmlns="http://www.w3.org/2000/svg"
@@ -279,11 +326,11 @@ function HomeContent() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDebateDelete(debate.id)}
+                            onClick={() => handleHistoryDelete(entry.id)}
                             className="rounded-full p-1.5 border transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-red-500/70"
                             style={{ borderColor: sidebar.cardBorder, color: sidebar.textSecondary }}
-                            aria-label="Delete debate summary"
-                            title="Delete debate summary"
+                            aria-label="Delete entry"
+                            title="Delete entry"
                           >
                             <svg
                               xmlns="http://www.w3.org/2000/svg"
@@ -303,38 +350,22 @@ function HomeContent() {
                           </button>
                         </div>
                       </div>
-                      <p
-                        className="text-xs leading-relaxed"
-                        style={{ color: sidebar.textSecondary }}
-                      >
-                        {debate.summary}
-                      </p>
-                      {debate.keyInsights.length > 0 && (
-                        <div className="space-y-1">
-                          <div
-                            className="text-[11px] font-medium uppercase tracking-wide"
-                            style={{ color: sidebar.textSecondary }}
-                          >
-                            Key insights
-                          </div>
-                          <ul className="space-y-1 text-xs" style={{ color: sidebar.textPrimary }}>
-                            {debate.keyInsights.slice(0, 3).map((insight, index) => (
-                              <li key={`${debate.id}-insight-${index}`} className="flex gap-2">
-                                <span aria-hidden>•</span>
-                                <span className="flex-1">{insight}</span>
-                              </li>
+                      {entry.mode === "debate" && entry.debate ? (
+                        <div className="space-y-1 text-xs" style={{ color: sidebar.textSecondary }}>
+                          <div className="font-medium">Summary</div>
+                          <p>{entry.debate.summary}</p>
+                          <div className="font-medium mt-2">Key insights</div>
+                          <ul className="list-disc list-inside space-y-1" style={{ color: sidebar.textPrimary }}>
+                            {entry.debate.keyInsights.slice(0, 3).map((insight, index) => (
+                              <li key={`${entry.id}-insight-${index}`}>{insight}</li>
                             ))}
-                            {debate.keyInsights.length > 3 && (
-                              <li
-                                className="text-[11px]"
-                                style={{ color: sidebar.textSecondary }}
-                              >
-                                +{debate.keyInsights.length - 3} more insight
-                                {debate.keyInsights.length - 3 === 1 ? "" : "s"}
-                              </li>
-                            )}
                           </ul>
                         </div>
+                      ) : (
+                        <p className="text-xs leading-relaxed" style={{ color: sidebar.textSecondary }}>
+                          {entry.content?.slice(0, 220) ?? ""}
+                          {entry.content && entry.content.length > 220 ? "..." : ""}
+                        </p>
                       )}
                     </article>
                   ))}
@@ -351,17 +382,8 @@ function HomeContent() {
             <Canvas
               params={params}
               onRequestInfo={setInfo}
-              onDebateHistoryUpdate={setDebateHistory}
-              registerDebateActions={handleRegisterDebateActions}
-              onCollectorToggleSelect={() => setCollectorSelectionMode((v) => !v)}
               collectorSelectionMode={collectorSelectionMode}
-              onCollectorPickNode={(n) => {
-                setCollector((prev) => {
-                  const next = { ...prev } as CollectorState;
-                  if (!next.pool.find((x)=>x.id===n.id)) next.pool = [...next.pool, n];
-                  return { ...next };
-                });
-              }}
+              onCollectorPickNode={handleAssignCollectorNode}
             />
           </AttentionProvider>
         </main>
@@ -382,21 +404,10 @@ function HomeContent() {
             onChangeState={setCollector}
             selectionMode={collectorSelectionMode}
             onToggleSelectionMode={() => setCollectorSelectionMode((v) => !v)}
-            onGenerateScript={async () => {
-              const arg = collector.argument;
-              const ctr = collector.counter;
-              const outline = collector.script.outline;
-              const buildList = (items: NodeItem[]) => items.map((n,i)=>`${i+1}. ${n.full || n.text || n.phrase || n.short || n.id}`).join("\n");
-              const prompt = `Craft a concise, engaging script supporting the main point using its evidences, and briefly rebut the anti-argument with its evidences.\n\nMain point:\n${arg.main?.full || arg.main?.text || ''}\n\nEvidences supporting the main point:\n${buildList(arg.evidences)}\n\nAnti-argument:\n${ctr.main?.full || ctr.main?.text || ''}\n\nEvidences for anti-argument:\n${buildList(ctr.evidences)}\n\nOptional outline cues (order hints):\n${buildList(outline)}\n\nOutput a single cohesive script (no JSON).`;
-              try {
-                const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, count: 1, phraseLength: params.phraseLength, temperature: params.temperature }) });
-                const data = await res.json();
-                const text = Array.isArray(data.items) && data.items[0] ? (data.items[0].full || data.items[0].text || String(data.items[0])) : '';
-                return String(text || '');
-              } catch {
-                return '';
-              }
-            }}
+            outputs={thoughtHistory}
+            activeOutputId={activeThoughtId}
+            onRecordOutput={handleRecordThought}
+            onSelectOutput={handleSelectOutput}
           />
         )}
       </div>
@@ -500,3 +511,5 @@ export default function Home() {
     </ThemeProvider>
   );
 }
+
+
