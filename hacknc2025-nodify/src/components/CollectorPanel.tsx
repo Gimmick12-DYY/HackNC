@@ -143,6 +143,10 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
 
   React.useEffect(() => { activeDragRef.current = activeDrag; }, [activeDrag]);
   React.useEffect(() => { dropIndicatorRef.current = dropIndicator; }, [dropIndicator]);
+  React.useEffect(() => {
+    dropIndicatorRef.current = null;
+    setDropIndicator(null);
+  }, [state.target.section]);
 
   const disableTextSelection = React.useCallback(() => {
     if (typeof document === "undefined") return;
@@ -556,7 +560,8 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
         </div>
 
         {/* Argument Section */}
-        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
+        {state.target.section === "argument" && (
+          <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Argument</div>
           <div className="space-y-2">
             <div
@@ -629,9 +634,11 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
             </div>
           </div>
         </div>
+        )}
 
         {/* Anti-Argument Section */}
-        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
+        {state.target.section === "counter" && (
+          <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Anti-Argument</div>
           <div className="space-y-2">
             <div
@@ -704,9 +711,11 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
             </div>
           </div>
         </div>
+        )}
 
         {/* Script Generation Section */}
-        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
+        {state.target.section === "script" && (
+          <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Script Generation</div>
           <div
             ref={(el) => { listRefs.current["script-outline"] = el; }}
@@ -743,8 +752,9 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
             )}
           </div>
         </div>
+        )}
       </div>
-      </motion.div>
+    </motion.div>
       {activeDrag && typeof document !== "undefined" &&
         createPortal(
           <div
