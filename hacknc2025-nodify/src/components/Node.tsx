@@ -221,6 +221,7 @@ export default function NodeCard({
   const onHoldStartRef = useRef(onHoldStart);
   const onHoldMoveRef = useRef(onHoldMove);
   const onHoldEndRef = useRef(onHoldEnd);
+  const dragPointerIdRef = useRef<number | null>(null);
   
   // Update refs when callbacks change
   onMoveRef.current = onMove;
@@ -235,56 +236,79 @@ export default function NodeCard({
 
   useEffect(() => {
     if (!dragging) return;
-    
+
+    const pointerId = dragPointerIdRef.current;
+    if (pointerId == null) return;
+
     // Capture current values in closure to avoid stale closure issues
     const currentDragStartPosition = dragStartPositionRef.current;
+    const nodeElement = ref.current;
     const nodeId = node.id;
-    
-    const handleMouseMove = (e: MouseEvent) => {
-      // Convert screen coordinates to world coordinates
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      if (e.pointerType !== "mouse") {
+        e.preventDefault();
+      }
       if (screenToCanvas) {
         const worldPos = screenToCanvas(e.clientX, e.clientY);
         onMoveRef.current(nodeId, worldPos.x - offsetRef.current.x, worldPos.y - offsetRef.current.y);
       } else {
-        // Fallback to old behavior if no conversion function provided
         onMoveRef.current(nodeId, e.clientX - offsetRef.current.x, e.clientY - offsetRef.current.y);
       }
       onHoldMoveRef.current?.({ nodeId, clientX: e.clientX, clientY: e.clientY });
     };
-    
-    const handleMouseUp = (e: MouseEvent) => {
-      // Convert screen coordinates to world coordinates
-      let finalX, finalY;
+
+    const finishDrag = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      if (nodeElement) {
+        try {
+          nodeElement.releasePointerCapture(pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+      let finalX: number;
+      let finalY: number;
       if (screenToCanvas) {
         const worldPos = screenToCanvas(e.clientX, e.clientY);
         finalX = worldPos.x - offsetRef.current.x;
         finalY = worldPos.y - offsetRef.current.y;
       } else {
-        // Fallback to old behavior if no conversion function provided
         finalX = e.clientX - offsetRef.current.x;
         finalY = e.clientY - offsetRef.current.y;
       }
       onMoveEndRef.current(nodeId, finalX, finalY, currentDragStartPosition.x, currentDragStartPosition.y);
       onHoldEndRef.current?.({ nodeId, clientX: e.clientX, clientY: e.clientY });
+      dragPointerIdRef.current = null;
       setDragging(false);
     };
-    
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", finishDrag, { passive: false });
+    window.addEventListener("pointercancel", finishDrag, { passive: false });
+
     return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", finishDrag);
     };
   }, [dragging, node.id, screenToCanvas]);
 
-  const startDrag = (e: React.MouseEvent) => {
+  const startDrag = (e: React.PointerEvent) => {
     // Don't start drag if clicking on TextField or input elements
     const target = e.target as HTMLElement;
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('.MuiTextField-root')) {
       return;
     }
     
+    if (!e.isPrimary && e.pointerType !== "mouse") {
+      return;
+    }
+    if (e.pointerType === "mouse" && e.button !== 0) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
     
@@ -294,6 +318,14 @@ export default function NodeCard({
     dragStartPositionRef.current = currentPosition;
     
     setDragging(true);
+    dragPointerIdRef.current = e.pointerId;
+    if (ref.current) {
+      try {
+        ref.current.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    }
     // Calculate offset from mouse position to node's current position
     if (screenToCanvas) {
       const worldPos = screenToCanvas(e.clientX, e.clientY);
@@ -368,7 +400,7 @@ export default function NodeCard({
     >
       <motion.div
         className="rounded-full backdrop-blur flex items-center justify-center text-center px-4 py-4"
-        onMouseDown={startDrag}
+        onPointerDown={startDrag}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         onContextMenu={handleContextMenu}
@@ -395,6 +427,7 @@ export default function NodeCard({
           height: "100%",
           boxShadow: nodeShadow,
           color: textColor,
+          touchAction: "none",
         }}
       >
         <motion.div
