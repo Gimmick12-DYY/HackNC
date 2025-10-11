@@ -276,6 +276,7 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
   const nodeHoldTimerRef = useRef<number | null>(null);
   const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
   const instructionsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const canvasPointerIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (instructionsButtonRef.current) {
@@ -1272,60 +1273,84 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
   // 鼠标中键平移事件
   const suppressNextCanvasClickRef = useRef(false);
 
-  const onCanvasMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 1) { // 中键
+  const onCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!canvasRef.current || !canvasRef.current.contains(e.target as Node)) {
+      return;
+    }
+    if (!e.isPrimary && e.pointerType !== "mouse") {
+      return;
+    }
+    if (e.pointerType === "mouse" && e.button === 1) { // 中键
       e.preventDefault();
       setIsPanning(true);
       setPanStart({ x: e.clientX - offsetX, y: e.clientY - offsetY });
-      // 阻止浏览器默认的中键滚动行为
       document.body.style.overflow = 'hidden';
       return;
     }
 
-    if (e.button === 0) {
-      const target = e.target as HTMLElement;
-      const isOnNode = Boolean(target.closest('.node-card'));
+    if (e.pointerType === "mouse" && e.button !== 0) {
+      return;
+    }
 
-      if (!isOnNode) {
-        if (!inputOverlay.open) {
-          if (rootHoldTimerRef.current !== null) {
-            window.clearTimeout(rootHoldTimerRef.current);
-          }
-          const initialClientX = e.clientX;
-          const initialClientY = e.clientY;
-          rootHoldActiveRef.current = true;
-          rootHoldStartRef.current = { clientX: initialClientX, clientY: initialClientY };
-          rootHoldWorldRef.current = screenToCanvas(initialClientX, initialClientY);
-          rootHoldTimerRef.current = window.setTimeout(() => {
-            rootHoldTimerRef.current = null;
-            if (!rootHoldActiveRef.current) return;
-            const position = rootHoldWorldRef.current ?? screenToCanvas(initialClientX, initialClientY);
-            setInputOverlay({
-              open: true,
-              mode: "create-root",
-              position,
-              targetNodeId: null,
-            });
-            setInputOverlayValue("");
-            setSelectionRect({ active: false, start: null, current: null });
-            rootHoldActiveRef.current = false;
-          }, HOLD_DURATION_MS);
+    if (e.pointerType !== "mouse") {
+      e.preventDefault();
+    }
+
+    const target = e.target as HTMLElement;
+    const isOnNode = Boolean(target.closest('.node-card'));
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      canvasPointerIdRef.current = e.pointerId;
+    } catch {
+      canvasPointerIdRef.current = e.pointerId;
+    }
+
+    if (!isOnNode) {
+      if (!inputOverlay.open) {
+        if (rootHoldTimerRef.current !== null) {
+          window.clearTimeout(rootHoldTimerRef.current);
         }
-        setSelectionRect({
-          active: false,
-          start: { x: e.clientX, y: e.clientY },
-          current: { x: e.clientX, y: e.clientY },
-        });
-        setContextMenu(null);
-        setSelectedIds(new Set());
-        suppressNextCanvasClickRef.current = false;
-      } else {
-        cancelRootHold();
+        const initialClientX = e.clientX;
+        const initialClientY = e.clientY;
+        rootHoldActiveRef.current = true;
+        rootHoldStartRef.current = { clientX: initialClientX, clientY: initialClientY };
+        rootHoldWorldRef.current = screenToCanvas(initialClientX, initialClientY);
+        rootHoldTimerRef.current = window.setTimeout(() => {
+          rootHoldTimerRef.current = null;
+          if (!rootHoldActiveRef.current) return;
+          const position = rootHoldWorldRef.current ?? screenToCanvas(initialClientX, initialClientY);
+          setInputOverlay({
+            open: true,
+            mode: "create-root",
+            position,
+            targetNodeId: null,
+          });
+          setInputOverlayValue("");
+          setSelectionRect({ active: false, start: null, current: null });
+          rootHoldActiveRef.current = false;
+        }, HOLD_DURATION_MS);
       }
+      setSelectionRect({
+        active: false,
+        start: { x: e.clientX, y: e.clientY },
+        current: { x: e.clientX, y: e.clientY },
+      });
+      setContextMenu(null);
+      setSelectedIds(new Set());
+      suppressNextCanvasClickRef.current = false;
+    } else {
+      cancelRootHold();
     }
   };
 
-  const onCanvasMouseMove = (e: React.MouseEvent) => {
+  const onCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (canvasPointerIdRef.current !== null && e.pointerId !== canvasPointerIdRef.current) {
+      return;
+    }
+    if (e.pointerType !== "mouse") {
+      e.preventDefault();
+    }
     let activateSelection = false;
     if (rootHoldActiveRef.current && rootHoldStartRef.current) {
       const dx = e.clientX - rootHoldStartRef.current.clientX;
@@ -1357,13 +1382,30 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
     }
   };
 
-  const onCanvasMouseUp = (e: React.MouseEvent) => {
-    if (e.button === 1) { // 中键
+  const onCanvasPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (canvasPointerIdRef.current !== null && e.pointerId === canvasPointerIdRef.current) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      canvasPointerIdRef.current = null;
+    }
+    if (e.pointerType === "mouse" && e.button === 1) { // 中键
       setIsPanning(false);
       setPanStart(null);
       document.body.style.overflow = '';
     }
-    if (e.button === 0) {
+    if (e.pointerType === "mouse" && e.button !== 0) {
+      cancelRootHold();
+      setSelectionRect({ active: false, start: null, current: null });
+      setTimeout(() => { suppressNextCanvasClickRef.current = false; }, 0);
+      return;
+    }
+    if (e.pointerType !== "mouse") {
+      e.preventDefault();
+    }
+    if ((e.pointerType === "mouse" && e.button === 0) || e.pointerType !== "mouse") {
       cancelRootHold();
       if (selectionRect.active && selectionRect.start && selectionRect.current) {
         const x1 = Math.min(selectionRect.start.x, selectionRect.current.x);
@@ -1388,6 +1430,19 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
       // 抑制随后一次 click 清空选择
       setTimeout(() => { suppressNextCanvasClickRef.current = false; }, 0);
     }
+  };
+
+  const onCanvasPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (canvasPointerIdRef.current !== null && e.pointerId === canvasPointerIdRef.current) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      canvasPointerIdRef.current = null;
+    }
+    cancelRootHold();
+    setSelectionRect({ active: false, start: null, current: null });
   };
 
   const onCanvasClick = (e: React.MouseEvent) => {
@@ -2756,11 +2811,15 @@ Respond with valid JSON only.`;
   // 不再使用滑动确认预览，预览在 Expand Overlay 打开时重算
 
   const handleNodeHoldStart = useCallback(
-    ({ nodeId }: { nodeId: string; clientX: number; clientY: number }) => {
+    ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
       if (inputOverlay.open) return;
       cancelNodeHold();
       clearPreview();
-      nodeHoldInfoRef.current = { nodeId, startClient: { x: 0, y: 0 }, startCanvas: { x: 0, y: 0 } };
+      nodeHoldInfoRef.current = {
+        nodeId,
+        startClient: { x: clientX, y: clientY },
+        startCanvas: screenToCanvas(clientX, clientY),
+      };
       nodeHoldTimerRef.current = window.setTimeout(() => {
         nodeHoldTimerRef.current = null;
         const info = nodeHoldInfoRef.current;
@@ -2768,7 +2827,7 @@ Respond with valid JSON only.`;
         openExpandOverlay(nodeId);
       }, HOLD_DURATION_MS);
     },
-    [cancelNodeHold, clearPreview, openExpandOverlay, inputOverlay.open]
+    [cancelNodeHold, clearPreview, openExpandOverlay, inputOverlay.open, screenToCanvas]
   );
 
   const handleNodeHoldMove = useCallback(({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
@@ -2983,11 +3042,13 @@ Respond with valid JSON only.`;
       onClick={onCanvasClick}
       onContextMenu={onCanvasContextMenu}
       onWheel={onCanvasWheel}
-      onMouseDown={onCanvasMouseDown}
-      onMouseMove={onCanvasMouseMove}
-      onMouseUp={onCanvasMouseUp}
+      onPointerDown={onCanvasPointerDown}
+      onPointerMove={onCanvasPointerMove}
+      onPointerUp={onCanvasPointerUp}
+      onPointerCancel={onCanvasPointerCancel}
       style={{
         cursor: isPanning ? 'grabbing' : 'default',
+        touchAction: 'none',
         ...backgroundStyles,
       }}
     >
