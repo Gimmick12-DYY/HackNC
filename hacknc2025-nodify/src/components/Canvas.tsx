@@ -8,6 +8,7 @@ import { DashboardParams, NodeItem, InfoData, NodeID, NodeGraph, NodeData } from
 import { getVisualDiameter, VISUAL_NODE_MINIMIZED_SIZE } from "@/utils/getVisualDiameter";
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import { DisjointSet } from "@/utils/disjointSet";
+import { debateNodes } from "./debate";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
@@ -96,6 +97,13 @@ type SerializedGraphState = {
 const GRAPH_STORAGE_KEY = "nodify.graph-state.v1";
 const GRAPH_STORAGE_VERSION = 1;
 
+type MultiSelectMenuState = {
+  open: boolean;
+  ids: string[];
+  x: number;
+  y: number;
+};
+
 const areGroupMapsEqual = (
   a: Record<string, string>,
   b: Record<string, string>
@@ -145,6 +153,9 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const [graphHydrated, setGraphHydrated] = useState(false);
   const storageHydratedRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
+  const [multiSelectMenu, setMultiSelectMenu] = useState<MultiSelectMenuState | null>(null);
+  const multiSelectMenuRef = useRef<HTMLDivElement | null>(null);
+  const shiftPressedRef = useRef(false);
   // 多选：用 Set 存储所有选中节点
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectedIdsRef = useRef<Set<string>>(new Set());
@@ -890,6 +901,55 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     return { x: screenX, y: screenY };
   }, [offsetX, offsetY, scale]);
 
+  const computeMultiSelectMenuPosition = useCallback(
+    (ids: string[]): { x: number; y: number } => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const fallback = {
+        x:
+          rect && typeof window !== "undefined"
+            ? Math.min(
+                Math.max(rect.left + rect.width / 2, 12),
+                window.innerWidth - 12
+              )
+            : (typeof window !== "undefined" ? window.innerWidth / 2 : 0),
+        y:
+          rect && typeof window !== "undefined"
+            ? Math.min(
+                Math.max(rect.top + rect.height / 2, 12),
+                window.innerHeight - 12
+              )
+            : (typeof window !== "undefined" ? window.innerHeight / 2 : 0),
+      };
+      if (!ids.length) return fallback;
+      let totalX = 0;
+      let totalY = 0;
+      let count = 0;
+      ids.forEach((id) => {
+        const node = nodesRef.current[id];
+        if (!node) return;
+        const size = node.size ?? 160;
+        const centerWorldX = node.x + size / 2;
+        const centerWorldY = node.y + size / 2;
+        const screenPos = worldToScreen(centerWorldX, centerWorldY);
+        totalX += screenPos.x;
+        totalY += screenPos.y;
+        count += 1;
+      });
+      if (count === 0) {
+        return fallback;
+      }
+      let x = totalX / count;
+      let y = totalY / count;
+      if (typeof window !== "undefined") {
+        const padding = 12;
+        x = Math.min(Math.max(padding, x), window.innerWidth - padding);
+        y = Math.min(Math.max(padding, y), window.innerHeight - padding);
+      }
+      return { x, y };
+    },
+    [worldToScreen]
+  );
+
   const cancelRootHold = useCallback(() => {
     if (rootHoldTimerRef.current !== null) {
       window.clearTimeout(rootHoldTimerRef.current);
@@ -928,6 +988,84 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     }
     nodeHoldInfoRef.current = null;
   }, []);
+
+  useEffect(() => {
+    const handleShiftDown = (event: KeyboardEvent) => {
+      if (event.key !== "Shift") return;
+      if (!shiftPressedRef.current) {
+        shiftPressedRef.current = true;
+        setMultiSelectMenu(null);
+      }
+    };
+    const handleShiftUp = (event: KeyboardEvent) => {
+      if (event.key !== "Shift") return;
+      shiftPressedRef.current = false;
+      const ids = Array.from(selectedIdsRef.current);
+      if (ids.length > 1) {
+        const position = computeMultiSelectMenuPosition(ids);
+        setMultiSelectMenu({
+          open: true,
+          ids,
+          x: position.x,
+          y: position.y,
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleShiftDown);
+    window.addEventListener("keyup", handleShiftUp);
+    return () => {
+      window.removeEventListener("keydown", handleShiftDown);
+      window.removeEventListener("keyup", handleShiftUp);
+    };
+  }, [computeMultiSelectMenuPosition]);
+
+  useEffect(() => {
+    if (!multiSelectMenu) return;
+    const ids = Array.from(selectedIds);
+    if (ids.length < 2) {
+      setMultiSelectMenu(null);
+      return;
+    }
+    const position = computeMultiSelectMenuPosition(ids);
+    setMultiSelectMenu((prev) => {
+      if (!prev) return prev;
+      const sameLength = prev.ids.length === ids.length;
+      const sameIds =
+        sameLength && prev.ids.every((value, index) => value === ids[index]);
+      const samePosition =
+        Math.abs(prev.x - position.x) < 0.1 &&
+        Math.abs(prev.y - position.y) < 0.1;
+      if (sameIds && samePosition) {
+        return prev;
+      }
+      return {
+        open: true,
+        ids,
+        x: position.x,
+        y: position.y,
+      };
+    });
+  }, [selectedIds, multiSelectMenu, computeMultiSelectMenuPosition]);
+
+  useEffect(() => {
+    if (!multiSelectMenu) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (multiSelectMenuRef.current?.contains(event.target as Node)) return;
+      setMultiSelectMenu(null);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMultiSelectMenu(null);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [multiSelectMenu]);
 
   const closeExpandOverlay = useCallback(() => {
     setExpandOverlay((prev) => ({ ...prev, open: false, nodeId: null }));
@@ -1193,6 +1331,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     
     // Hide context menu if visible
     setContextMenu(null);
+    setMultiSelectMenu(null);
     if (pendingConnection) {
       setPendingConnection(null);
       showSnack("Connection cancelled", "info");
@@ -1238,6 +1377,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     x = Math.max(padding, x);
     y = Math.max(padding, y);
     
+    setMultiSelectMenu(null);
     setContextMenu({ 
       x, 
       y, 
@@ -1361,7 +1501,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   }, [nodes]);
 
   const connectNodes = useCallback(
-    (childId: string, parentId: string) => {
+    (childId: string, parentId: string, options?: { silentSuccess?: boolean }) => {
       if (childId === parentId) {
         showSnack("Cannot connect a node to itself", "warning");
         return false;
@@ -1433,14 +1573,59 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         return exists ? withoutOld : [...withoutOld, [parentId, childId]];
       });
       schedulePhysicsSettle();
-      showSnack("Nodes connected successfully", "success");
+      if (!options?.silentSuccess) {
+        showSnack("Nodes connected successfully", "success");
+      }
       return true;
     },
     [computeSizeByDepth, schedulePhysicsSettle, showSnack]
   );
 
+  const connectSelectedNodes = useCallback(() => {
+    const ids = Array.from(selectedIdsRef.current);
+    if (ids.length < 2) {
+      showSnack("Select at least two nodes to connect", "warning");
+      return;
+    }
+    const [parentId, ...childrenIds] = ids;
+    let successCount = 0;
+    childrenIds.forEach((childId) => {
+      const result = connectNodes(childId, parentId, { silentSuccess: true });
+      if (result) {
+        successCount += 1;
+      }
+    });
+    if (successCount === 0) {
+      showSnack("Unable to connect selected nodes", "warning");
+      return;
+    }
+    if (successCount < childrenIds.length) {
+      showSnack(
+        `Connected ${successCount + 1} of ${childrenIds.length + 1} nodes`,
+        "info"
+      );
+    } else {
+      showSnack(`Connected ${childrenIds.length + 1} nodes`, "success");
+    }
+    setMultiSelectMenu(null);
+    const normalizedSelection = new Set(ids);
+    setSelectedIds(normalizedSelection);
+    commitFocus(parentId);
+  }, [commitFocus, connectNodes, showSnack]);
+
+  const handleDebateSelectedNodes = useCallback(() => {
+    const ids = Array.from(selectedIdsRef.current);
+    if (ids.length < 2) {
+      showSnack("Select at least two nodes to debate", "warning");
+      return;
+    }
+    debateNodes(ids);
+    showSnack("Debating! feature coming soon", "info");
+    setMultiSelectMenu(null);
+  }, [showSnack]);
+
   // 点击节点：单选并打开信息
-  const handleNodeClick = useCallback((id: string) => {
+  const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
     if (pendingConnection) {
       const success = connectNodes(pendingConnection.childId, id);
       if (success) {
@@ -1448,9 +1633,27 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         setSelectedIds(s);
         commitFocus(id);
         setPendingConnection(null);
+        setMultiSelectMenu(null);
       }
       return;
     }
+    if (event?.shiftKey) {
+      const currentSelection = selectedIdsRef.current;
+      const nextSelection = new Set(currentSelection);
+      if (nextSelection.has(id)) {
+        nextSelection.delete(id);
+      } else {
+        nextSelection.add(id);
+      }
+      setSelectedIds(nextSelection);
+      if (nextSelection.size > 0) {
+        commitFocus(id);
+      } else {
+        commitFocus(null);
+      }
+      return;
+    }
+    setMultiSelectMenu(null);
     const s = new Set<string>([id]);
     setSelectedIds(s);
     commitFocus(id);
@@ -1526,6 +1729,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       executingActionsRef.current.delete(actionKey);
     }, 1000);
     
+    setMultiSelectMenu(null);
+    
     switch (action) {
       case 'expand':
         console.log('Expand action triggered for node:', nodeId);
@@ -1592,6 +1797,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     x = Math.max(padding, x);
     y = Math.max(padding, y);
     
+    setMultiSelectMenu(null);
     setContextMenu({ 
       x, 
       y, 
@@ -2745,6 +2951,43 @@ Respond with valid JSON only.`;
 
       { (previewState.parentId) && (
         <div className="pointer-events-none absolute inset-0 bg-slate-950/12 transition-opacity duration-150" />
+      )}
+
+      {multiSelectMenu && typeof document !== "undefined" && createPortal(
+        <div
+          ref={(node) => {
+            multiSelectMenuRef.current = node;
+          }}
+          className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg py-2 px-3 min-w-[220px]"
+          style={{
+            left: multiSelectMenu.x,
+            top: multiSelectMenu.y,
+            transform: "translate(-50%, -120%)",
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {multiSelectMenu.ids.length} nodes selected
+          </div>
+          <div className="flex flex-col gap-1">
+            <button
+              className="w-full px-3 py-2 rounded-md text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
+              onClick={connectSelectedNodes}
+            >
+              <span>Connect Selected</span>
+            </button>
+            <button
+              className="w-full px-3 py-2 rounded-md text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
+              onClick={handleDebateSelectedNodes}
+            >
+              <span>Debating!</span>
+              <span className="text-xs text-rose-500">Coming soon</span>
+            </button>
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* Context Menu - Render in Portal for consistent positioning */}

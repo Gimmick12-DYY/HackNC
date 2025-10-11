@@ -27,7 +27,7 @@ type Props = {
   onDoubleClickNode?: (id: string) => void;
   onHoverNode?: (id: string) => void;
   onHoverLeave?: (id: string) => void;
-  onClickNode?: (id: string) => void;
+  onClickNode?: (id: string, event: React.MouseEvent) => void;
   distance?: number;
   isGlobalDragging?: boolean;
 };
@@ -325,7 +325,7 @@ export default function NodeCard({
     if (node.minimized) {
       onMinimize?.(node.id);
     }
-    onClickNode?.(node.id);
+    onClickNode?.(node.id, e);
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
