@@ -18,6 +18,14 @@ type ThemeOpacityRange = {
 
 export type ThemeId = "sunrise" | "midnight" | "aurora";
 
+export type ThemeGridConfig = {
+  enabled?: boolean;
+  lineColor: string;
+  dotColor: string;
+  lineOpacity: ThemeOpacityRange;
+  dotOpacity: ThemeOpacityRange;
+};
+
 export type ThemeDefinition = {
   id: ThemeId;
   name: string;
@@ -26,12 +34,7 @@ export type ThemeDefinition = {
   previewColors: string[];
   canvas: {
     background: string;
-    grid: {
-      lineColor: string;
-      dotColor: string;
-      lineOpacity: ThemeOpacityRange;
-      dotOpacity: ThemeOpacityRange;
-    };
+    grid?: ThemeGridConfig | null;
     origin: {
       fill: string;
       stroke: string;
@@ -118,6 +121,7 @@ const SUNRISE_THEME: ThemeDefinition = {
   canvas: {
     background: "linear-gradient(135deg, #f7f2e8 0%, #f3eadb 100%)",
     grid: {
+      enabled: false,
       lineColor: "#9ca3af",
       dotColor: "#e2e8f0",
       lineOpacity: { min: 0.45, max: 0.78, scale: 0.32 },
@@ -217,6 +221,7 @@ const MIDNIGHT_THEME: ThemeDefinition = {
     background:
       "radial-gradient(140% 140% at 15% 20%, #1e293b 0%, #0f172a 50%, #020617 100%)",
     grid: {
+      enabled: false,
       lineColor: "#334155",
       dotColor: "#1e293b",
       lineOpacity: { min: 0.32, max: 0.6, scale: 0.28 },
@@ -317,6 +322,7 @@ const AURORA_THEME: ThemeDefinition = {
     background:
       "linear-gradient(120deg, #0ea5e9 0%, #312e81 40%, #7c3aed 70%, #a855f7 100%)",
     grid: {
+      enabled: false,
       lineColor: "#1f2937",
       dotColor: "#0f172a",
       lineOpacity: { min: 0.28, max: 0.6, scale: 0.34 },

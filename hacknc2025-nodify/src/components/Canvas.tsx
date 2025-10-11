@@ -2033,8 +2033,14 @@ Respond with valid JSON only.`;
   const hasFocusedNode = Boolean(focusedNodeId);
 
   // 生成网格背景
+  const gridConfig = theme.canvas.grid;
+  const gridEnabled = Boolean(gridConfig && gridConfig.enabled !== false);
   const gridSize = 35; // 基础网格大小（更密集）
   const gridPattern = useMemo(() => {
+    if (!gridEnabled || !gridConfig) {
+      return null;
+    }
+
     let actualGridSize = gridSize;
 
     while (actualGridSize * scale < 20 && actualGridSize < 200) {
@@ -2057,8 +2063,8 @@ Respond with valid JSON only.`;
       return Math.min(range.max, Math.max(range.min, scaled));
     };
 
-    const lineOpacity = computeOpacity(theme.canvas.grid.lineOpacity);
-    const dotOpacity = computeOpacity(theme.canvas.grid.dotOpacity);
+    const lineOpacity = computeOpacity(gridConfig.lineOpacity);
+    const dotOpacity = computeOpacity(gridConfig.dotOpacity);
 
     return {
       size: scaledGridSize,
@@ -2067,16 +2073,38 @@ Respond with valid JSON only.`;
       lineOpacity,
       dotOpacity,
     };
-  }, [scale, offsetX, offsetY, theme]);
+  }, [gridEnabled, gridConfig, scale, offsetX, offsetY]);
 
-  const gridLineColor = hexToRgba(
-    theme.canvas.grid.lineColor,
-    gridPattern.lineOpacity
-  );
-  const gridDotColor = hexToRgba(
-    theme.canvas.grid.dotColor,
-    gridPattern.dotOpacity
-  );
+  const backgroundStyles = useMemo(() => {
+    if (!gridEnabled || !gridPattern || !gridConfig) {
+      return {
+        background: theme.canvas.background,
+        transition: "background 0.6s ease",
+      };
+    }
+
+    const gridLineColor = hexToRgba(
+      gridConfig.lineColor,
+      gridPattern.lineOpacity
+    );
+    const gridDotColor = hexToRgba(
+      gridConfig.dotColor,
+      gridPattern.dotOpacity
+    );
+
+    return {
+      backgroundImage: `
+          radial-gradient(${gridDotColor} 1px, transparent 1px),
+          linear-gradient(90deg, transparent ${gridPattern.size - 1}px, ${gridLineColor} 1px),
+          linear-gradient(transparent ${gridPattern.size - 1}px, ${gridLineColor} 1px),
+          ${theme.canvas.background}
+        `,
+      backgroundSize: `${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, 100% 100%`,
+      backgroundPosition: `${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, 0 0`,
+      backgroundRepeat: "repeat, repeat, repeat, no-repeat",
+      transition: "background 0.6s ease",
+    };
+  }, [gridEnabled, gridPattern, gridConfig, theme.canvas.background]);
 
   return (
     <div
@@ -2090,16 +2118,7 @@ Respond with valid JSON only.`;
       onMouseUp={onCanvasMouseUp}
       style={{
         cursor: isPanning ? 'grabbing' : 'default',
-        backgroundImage: `
-          radial-gradient(${gridDotColor} 1px, transparent 1px),
-          linear-gradient(90deg, transparent ${gridPattern.size - 1}px, ${gridLineColor} 1px),
-          linear-gradient(transparent ${gridPattern.size - 1}px, ${gridLineColor} 1px),
-          ${theme.canvas.background}
-        `,
-        backgroundSize: `${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, ${gridPattern.size}px ${gridPattern.size}px, 100% 100%`,
-        backgroundPosition: `${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, ${gridPattern.offsetX}px ${gridPattern.offsetY}px, 0 0`,
-        backgroundRepeat: "repeat, repeat, repeat, no-repeat",
-        transition: "background 0.6s ease",
+        ...backgroundStyles,
       }}
     >
       {/* 变换容器 - 应用缩放和平移 */}
