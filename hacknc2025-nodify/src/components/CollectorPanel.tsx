@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { NodeItem } from "./types";
 import { useTheme, hexToRgba } from "./Themes";
@@ -27,78 +28,378 @@ type Props = {
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 520;
 
+type DragListKey = "pool" | "argument-evidences" | "counter-evidences" | "script-outline";
+type DragSourceKey = DragListKey | "argument-main" | "counter-main";
+
+const DRAG_LIST_KEYS: readonly DragListKey[] = [
+  "pool",
+  "argument-evidences",
+  "counter-evidences",
+  "script-outline",
+] as const;
+
+type DropIndicator =
+  | { kind: "list"; list: DragListKey; index: number }
+  | { kind: "main"; section: "argument" | "counter" }
+  | null;
+
+type ActiveDragState = {
+  node: NodeItem;
+  source: DragSourceKey;
+  index: number | null;
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+  clientX: number;
+  clientY: number;
+};
+
+const getNodeLabel = (node: NodeItem) =>
+  node.text || node.full || node.short || node.id;
+
+const isListKey = (key: DragSourceKey): key is DragListKey =>
+  DRAG_LIST_KEYS.includes(key as DragListKey);
+
 export default function CollectorPanel({ width, onResize, onClose, state, onChangeState, selectionMode, onToggleSelectionMode, onGenerateScript }: Props) {
   const { theme } = useTheme();
   const sidebar = theme.ui.sidebar;
   const accent = sidebar.inputFocus;
   const accentBg = hexToRgba(accent, 0.12);
   const accentBgHover = hexToRgba(accent, 0.2);
+  const dropAccent = hexToRgba(accent, 0.45);
 
-  // Helpers to fetch a node by id from anywhere in collector state
-  const findNodeById = React.useCallback((id: string): NodeItem | null => {
-    const pools: NodeItem[][] = [
-      state.pool,
-      state.argument.evidences,
-      state.counter.evidences,
-      state.script.outline,
-    ];
-    for (const list of pools) {
-      const n = list.find((x) => x.id === id);
-      if (n) return n;
+  const createDraft = React.useCallback((): CollectorState => ({
+    argument: {
+      main: state.argument.main,
+      evidences: [...state.argument.evidences],
+    },
+    counter: {
+      main: state.counter.main,
+      evidences: [...state.counter.evidences],
+    },
+    script: {
+      outline: [...state.script.outline],
+    },
+    target: { ...state.target },
+    pool: [...state.pool],
+  }), [state]);
+
+  const mutateState = React.useCallback((producer: (draft: CollectorState) => void) => {
+    const draft = createDraft();
+    producer(draft);
+    onChangeState(draft);
+  }, [createDraft, onChangeState]);
+
+  const getList = React.useCallback((draft: CollectorState, key: DragListKey): NodeItem[] => {
+    switch (key) {
+      case "pool":
+        return draft.pool;
+      case "argument-evidences":
+        return draft.argument.evidences;
+      case "counter-evidences":
+        return draft.counter.evidences;
+      case "script-outline":
+        return draft.script.outline;
+      default:
+        return draft.pool;
     }
-    if (state.argument.main?.id === id) return state.argument.main;
-    if (state.counter.main?.id === id) return state.counter.main;
-    return null;
-  }, [state]);
+  }, []);
 
-  const createDragImage = (text: string) => {
-    const el = document.createElement('div');
-    el.textContent = text;
-    el.style.position = 'fixed';
-    el.style.top = '-1000px';
-    el.style.left = '-1000px';
-    el.style.padding = '6px 10px';
-    el.style.borderRadius = '8px';
-    el.style.background = sidebar.inputBackground;
-    el.style.border = `1px solid ${sidebar.cardBorder}`;
-    el.style.color = sidebar.textPrimary;
-    el.style.fontSize = '12px';
-    el.style.opacity = '1';
-    document.body.appendChild(el);
-    return el;
-  };
+  const detachNode = React.useCallback((draft: CollectorState, id: string) => {
+    draft.pool = draft.pool.filter((x) => x.id !== id);
+    draft.argument.evidences = draft.argument.evidences.filter((x) => x.id !== id);
+    draft.counter.evidences = draft.counter.evidences.filter((x) => x.id !== id);
+    draft.script.outline = draft.script.outline.filter((x) => x.id !== id);
+    if (draft.argument.main?.id === id) draft.argument.main = null;
+    if (draft.counter.main?.id === id) draft.counter.main = null;
+  }, []);
 
-  type ChipSource = 'pool' | 'arg-evi' | 'ctr-evi' | 'script' | 'arg-main' | 'ctr-main';
-  const DraggableChip: React.FC<{ node: NodeItem; source: ChipSource }> = ({ node, source }) => {
+  const [activeDrag, setActiveDrag] = React.useState<ActiveDragState | null>(null);
+  const [dropIndicator, setDropIndicator] = React.useState<DropIndicator>(null);
+
+  const dragDataRef = React.useRef<{ node: NodeItem; source: DragSourceKey; index: number | null } | null>(null);
+  const pointerListenersRef = React.useRef<{
+    move: (e: PointerEvent) => void;
+    up: (e: PointerEvent) => void;
+    cancel: (e: PointerEvent) => void;
+  } | null>(null);
+  const previousUserSelectRef = React.useRef<string | null>(null);
+  const previousCursorRef = React.useRef<string | null>(null);
+  const activeDragRef = React.useRef<ActiveDragState | null>(null);
+  const dropIndicatorRef = React.useRef<DropIndicator>(null);
+  const listRefs = React.useRef<Record<DragListKey, HTMLDivElement | null>>({
+    "pool": null,
+    "argument-evidences": null,
+    "counter-evidences": null,
+    "script-outline": null,
+  });
+  const mainRefs = React.useRef<{ argument: HTMLDivElement | null; counter: HTMLDivElement | null }>({
+    argument: null,
+    counter: null,
+  });
+
+  React.useEffect(() => { activeDragRef.current = activeDrag; }, [activeDrag]);
+  React.useEffect(() => { dropIndicatorRef.current = dropIndicator; }, [dropIndicator]);
+
+  const disableTextSelection = React.useCallback(() => {
+    if (typeof document === "undefined") return;
+    previousUserSelectRef.current = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const restoreTextSelection = React.useCallback(() => {
+    if (typeof document === "undefined") return;
+    if (previousUserSelectRef.current != null) {
+      document.body.style.userSelect = previousUserSelectRef.current;
+      previousUserSelectRef.current = null;
+    } else {
+      document.body.style.userSelect = "";
+    }
+  }, []);
+
+  const cleanupPointerListeners = React.useCallback(() => {
+    const listeners = pointerListenersRef.current;
+    if (listeners) {
+      window.removeEventListener("pointermove", listeners.move);
+      window.removeEventListener("pointerup", listeners.up);
+      window.removeEventListener("pointercancel", listeners.cancel);
+      pointerListenersRef.current = null;
+    }
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      cleanupPointerListeners();
+      if (typeof document !== "undefined") {
+        if (previousUserSelectRef.current != null) {
+          document.body.style.userSelect = previousUserSelectRef.current;
+          previousUserSelectRef.current = null;
+        } else {
+          document.body.style.userSelect = "";
+        }
+        if (previousCursorRef.current != null) {
+          document.body.style.cursor = previousCursorRef.current;
+          previousCursorRef.current = null;
+        } else {
+          document.body.style.cursor = "";
+        }
+      }
+    };
+  }, [cleanupPointerListeners]);
+
+  const setActiveDragState = React.useCallback((value: ActiveDragState | null | ((prev: ActiveDragState | null) => ActiveDragState | null)) => {
+    setActiveDrag((prev) => {
+      const next = typeof value === "function" ? (value as (p: ActiveDragState | null) => ActiveDragState | null)(prev) : value;
+      activeDragRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const updateDropTarget = React.useCallback((clientX: number, clientY: number) => {
+    const margin = 18;
+    const applyDropIndicator = (next: DropIndicator) => {
+      const current = dropIndicatorRef.current;
+      if (current && next) {
+        if (
+          current.kind === "main" &&
+          next.kind === "main" &&
+          current.section === next.section
+        ) {
+          return;
+        }
+        if (
+          current.kind === "list" &&
+          next.kind === "list" &&
+          current.list === next.list &&
+          current.index === next.index
+        ) {
+          return;
+        }
+      }
+      if (!current && next === null) {
+        return;
+      }
+      dropIndicatorRef.current = next;
+      setDropIndicator(next);
+    };
+
+    const argumentMain = mainRefs.current.argument;
+    if (argumentMain) {
+      const rect = argumentMain.getBoundingClientRect();
+      if (
+        clientX >= rect.left - margin &&
+        clientX <= rect.right + margin &&
+        clientY >= rect.top - margin &&
+        clientY <= rect.bottom + margin
+      ) {
+        applyDropIndicator({ kind: "main", section: "argument" });
+        return;
+      }
+    }
+    const counterMain = mainRefs.current.counter;
+    if (counterMain) {
+      const rect = counterMain.getBoundingClientRect();
+      if (
+        clientX >= rect.left - margin &&
+        clientX <= rect.right + margin &&
+        clientY >= rect.top - margin &&
+        clientY <= rect.bottom + margin
+      ) {
+        applyDropIndicator({ kind: "main", section: "counter" });
+        return;
+      }
+    }
+
+    for (const list of DRAG_LIST_KEYS) {
+      const container = listRefs.current[list];
+      if (!container) continue;
+      const rect = container.getBoundingClientRect();
+      if (
+        clientX >= rect.left - margin &&
+        clientX <= rect.right + margin &&
+        clientY >= rect.top - margin &&
+        clientY <= rect.bottom + margin
+      ) {
+        const chips = Array.from(container.querySelectorAll<HTMLElement>("[data-node-id]"));
+        if (chips.length === 0) {
+          applyDropIndicator({ kind: "list", list, index: 0 });
+          return;
+        }
+        for (let i = 0; i < chips.length; i += 1) {
+          const chipRect = chips[i].getBoundingClientRect();
+          if (clientY < chipRect.top + chipRect.height / 2) {
+            applyDropIndicator({ kind: "list", list, index: i });
+            return;
+          }
+        }
+        applyDropIndicator({ kind: "list", list, index: chips.length });
+        return;
+      }
+    }
+
+    applyDropIndicator(null);
+  }, []);
+
+  const finishDrag = React.useCallback((commit: boolean) => {
+    restoreTextSelection();
+    if (typeof document !== "undefined") {
+      if (previousCursorRef.current != null) {
+        document.body.style.cursor = previousCursorRef.current;
+        previousCursorRef.current = null;
+      } else {
+        document.body.style.cursor = "";
+      }
+    }
+    cleanupPointerListeners();
+    const dropTarget = dropIndicatorRef.current;
+    const dragData = dragDataRef.current;
+    dragDataRef.current = null;
+    setActiveDragState(null);
+    setDropIndicator(null);
+
+    if (!commit || !dropTarget || !dragData) {
+      return;
+    }
+
+    if (dropTarget.kind === "list") {
+      const originalList = isListKey(dragData.source) ? dragData.source : null;
+      const originalIndex = dragData.index;
+      let insertAt = dropTarget.index;
+      if (originalList === dropTarget.list && originalIndex != null) {
+        if (insertAt > originalIndex) insertAt -= 1;
+        if (insertAt === originalIndex) {
+          return;
+        }
+      }
+      mutateState((draft) => {
+        detachNode(draft, dragData.node.id);
+        const target = getList(draft, dropTarget.list);
+        const clamped = Math.max(0, Math.min(insertAt, target.length));
+        target.splice(clamped, 0, dragData.node);
+      });
+      return;
+    }
+
+    if (dropTarget.kind === "main") {
+      if (
+        (dropTarget.section === "argument" && dragData.source === "argument-main") ||
+        (dropTarget.section === "counter" && dragData.source === "counter-main")
+      ) {
+        return;
+      }
+      mutateState((draft) => {
+        detachNode(draft, dragData.node.id);
+        if (dropTarget.section === "argument") {
+          draft.argument.main = dragData.node;
+        } else {
+          draft.counter.main = dragData.node;
+        }
+      });
+    }
+  }, [cleanupPointerListeners, detachNode, getList, mutateState, restoreTextSelection, setActiveDragState]);
+
+  const beginDrag = React.useCallback((event: React.PointerEvent<HTMLDivElement>, node: NodeItem, source: DragSourceKey, index?: number) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    disableTextSelection();
+    if (typeof document !== "undefined") {
+      previousCursorRef.current = document.body.style.cursor;
+      document.body.style.cursor = "grabbing";
+    }
+    dragDataRef.current = { node, source, index: index ?? null };
+    setActiveDragState({
+      node,
+      source,
+      index: index ?? null,
+      width: rect.width,
+      height: rect.height,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+    updateDropTarget(event.clientX, event.clientY);
+
+    const handleMove = (e: PointerEvent) => {
+      setActiveDragState((prev) =>
+        prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev
+      );
+      updateDropTarget(e.clientX, e.clientY);
+    };
+    const handleUp = () => {
+      const hasTarget = dropIndicatorRef.current != null;
+      finishDrag(Boolean(hasTarget));
+    };
+    const handleCancel = () => {
+      finishDrag(false);
+    };
+    pointerListenersRef.current = { move: handleMove, up: handleUp, cancel: handleCancel };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleCancel);
+  }, [disableTextSelection, finishDrag, setActiveDragState, updateDropTarget]);
+
+  const DraggableChip: React.FC<{ node: NodeItem; source: DragSourceKey; index?: number }> = ({ node, source, index }) => {
+    const isActive = activeDrag?.node.id === node.id;
     return (
       <div
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData('application/x-node-id', node.id);
-          e.dataTransfer.setData('text/source', source);
-          const ghost = createDragImage(node.text || node.full || node.short || node.id);
-          e.dataTransfer.setDragImage(ghost, 10, 10);
-          // cleanup on end
-          const cleanup = () => { ghost.remove(); window.removeEventListener('dragend', cleanup as any); };
-          window.addEventListener('dragend', cleanup as any, { once: true });
+        data-node-id={node.id}
+        onPointerDown={(e) => beginDrag(e, node, source, index)}
+        className={`rounded-md px-2 py-1 border text-[12px] select-none ${isActive ? "cursor-grabbing" : "cursor-grab"}`}
+        style={{
+          borderColor: sidebar.cardBorder,
+          background: sidebar.inputBackground,
+          color: sidebar.textPrimary,
+          opacity: isActive ? 0.2 : 1,
+          visibility: isActive ? "hidden" : "visible",
+          pointerEvents: isActive ? "none" : "auto",
         }}
-        className="rounded-md px-2 py-1 border text-[12px] cursor-grab select-none"
-        style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground, color: sidebar.textPrimary }}
       >
-        {node.text || node.full || node.short || node.id}
+        {getNodeLabel(node)}
       </div>
     );
-  };
-
-  const removeFromAll = (id: string, draft: CollectorState): CollectorState => {
-    const next = { ...draft } as CollectorState;
-    next.pool = next.pool.filter((x) => x.id !== id);
-    next.argument.evidences = next.argument.evidences.filter((x) => x.id !== id);
-    next.counter.evidences = next.counter.evidences.filter((x) => x.id !== id);
-    next.script.outline = next.script.outline.filter((x) => x.id !== id);
-    if (next.argument.main?.id === id) next.argument.main = null;
-    if (next.counter.main?.id === id) next.counter.main = null;
-    return next;
   };
 
   const handleResizeStart = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -122,21 +423,22 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
   }, [onResize, width]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 40 }}
-      animate={{ opacity: 1, x: 0, width }}
-      exit={{ opacity: 0, x: 40 }}
-      transition={{ duration: 0.25, ease: "easeOut" }}
-      className="shadow-lg h-full flex flex-col border-l relative"
-      style={{
-        width,
-        background: sidebar.background,
-        borderLeftColor: sidebar.border,
-        height: "calc(100vh - 64px)",
-        maxHeight: "calc(100vh - 64px)",
-        overflow: "hidden",
-      }}
-    >
+    <>
+      <motion.div
+        initial={{ opacity: 0, x: 40 }}
+        animate={{ opacity: 1, x: 0, width }}
+        exit={{ opacity: 0, x: 40 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+        className="shadow-lg h-full flex flex-col border-l relative"
+        style={{
+          width,
+          background: sidebar.background,
+          borderLeftColor: sidebar.border,
+          height: "calc(100vh - 64px)",
+          maxHeight: "calc(100vh - 64px)",
+          overflow: "hidden",
+        }}
+      >
       <div
         className="absolute top-0 left-0 h-full w-1.5 cursor-ew-resize"
         aria-hidden
@@ -172,10 +474,26 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
           {state.pool.length === 0 ? (
             <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(none yet)</div>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div
+              ref={(el) => { listRefs.current["pool"] = el; }}
+              className="flex flex-col gap-2"
+            >
               {state.pool.map((n, idx) => (
-                <DraggableChip key={`${n.id}-${idx}`} node={n} source="pool" />
+                <React.Fragment key={n.id}>
+                  {dropIndicator?.kind === "list" && dropIndicator.list === "pool" && dropIndicator.index === idx && (
+                    <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                  )}
+                  <div>
+                    <DraggableChip node={n} source="pool" index={idx} />
+                  </div>
+                </React.Fragment>
               ))}
+              {dropIndicator?.kind === "list" && dropIndicator.list === "pool" && dropIndicator.index === state.pool.length && (
+                <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+              )}
+              {state.pool.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "pool" && (
+                <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+              )}
             </div>
           )}
         </div>
@@ -193,22 +511,25 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
         </div>
 
         {/* Argument Section */}
-        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }} onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{
-          const id = e.dataTransfer.getData('application/x-node-id');
-          const found = state.pool.find((x)=>x.id===id);
-          if (!found) return;
-          onChangeState({ ...state, argument: { ...state.argument, evidences: state.argument.evidences.find(x=>x.id===id) ? state.argument.evidences : [...state.argument.evidences, found] } });
-        }}>
+        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Argument</div>
           <div className="space-y-2">
-            <div className="border rounded-md p-2" style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }} onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{
-              const id = e.dataTransfer.getData('application/x-node-id');
-              const found = findNodeById(id);
-              if (!found) return;
-              onChangeState(removeFromAll(id, { ...state, argument: { ...state.argument, main: found } }));
-            }}>
+            <div
+              ref={(el) => { mainRefs.current.argument = el; }}
+              className="border rounded-md p-2"
+              style={{
+                borderColor: dropIndicator?.kind === "main" && dropIndicator.section === "argument" ? accent : sidebar.cardBorder,
+                background: dropIndicator?.kind === "main" && dropIndicator.section === "argument" ? accentBg : sidebar.inputBackground,
+              }}
+            >
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Main Point</div>
-              <div className="text-[13px]" style={{ color: sidebar.textPrimary }}>{state.argument.main?.text || '(select a node as main)'}</div>
+              {state.argument.main ? (
+                <div className="mt-1 text-[13px]" style={{ color: sidebar.textPrimary }}>
+                  <DraggableChip node={state.argument.main} source="argument-main" />
+                </div>
+              ) : (
+                <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select a node as main)</div>
+              )}
               <div className="mt-2 flex gap-2">
                 <button type="button" className="text-xs rounded-full border px-2 py-1 shadow-sm"
                   style={{ color: sidebar.textPrimary, borderColor: state.target.section==='argument' && state.target.field==='main' ? accent : sidebar.cardBorder, background: state.target.section==='argument' && state.target.field==='main' ? accentBg : sidebar.cardBackground }}
@@ -219,86 +540,120 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
             </div>
             <div className="border rounded-md p-2" style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }}>
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Evidences</div>
-              {state.argument.evidences.length === 0 ? (
-                <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select nodes as evidences)</div>
-              ) : (
-                <div className="flex flex-wrap gap-2" onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{
-                  const id = e.dataTransfer.getData('application/x-node-id');
-                  const found = findNodeById(id);
-                  if (!found) return;
-                  const exists = state.argument.evidences.find(x=>x.id===id);
-                  if (!exists) onChangeState(removeFromAll(id, { ...state, argument: { ...state.argument, evidences: [...state.argument.evidences, found] } }));
-                }}>
-                  {state.argument.evidences.map((n, idx) => (
-                    <DraggableChip key={n.id} node={n} source="arg-evi" />
-                  ))}
-                </div>
-              )}
+              <div
+                ref={(el) => { listRefs.current["argument-evidences"] = el; }}
+                className="flex flex-col gap-2 min-h-[32px]"
+              >
+                {state.argument.evidences.length === 0 ? (
+                  <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select nodes as evidences)</div>
+                ) : (
+                  state.argument.evidences.map((n, idx) => (
+                    <React.Fragment key={n.id}>
+                      {dropIndicator?.kind === "list" && dropIndicator.list === "argument-evidences" && dropIndicator.index === idx && (
+                        <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                      )}
+                      <div>
+                        <DraggableChip node={n} source="argument-evidences" index={idx} />
+                      </div>
+                    </React.Fragment>
+                  ))
+                )}
+                {state.argument.evidences.length > 0 && dropIndicator?.kind === "list" && dropIndicator.list === "argument-evidences" && dropIndicator.index === state.argument.evidences.length && (
+                  <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                )}
+                {state.argument.evidences.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "argument-evidences" && (
+                  <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                )}
+              </div>
               {/* Drop instead of button */}
             </div>
           </div>
         </div>
 
         {/* Anti-Argument Section */}
-        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }} onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{
-          const id = e.dataTransfer.getData('application/x-node-id');
-          const found = state.pool.find((x)=>x.id===id);
-          if (!found) return;
-          onChangeState({ ...state, counter: { ...state.counter, evidences: state.counter.evidences.find(x=>x.id===id) ? state.counter.evidences : [...state.counter.evidences, found] } });
-        }}>
+        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Anti-Argument</div>
           <div className="space-y-2">
-            <div className="border rounded-md p-2" style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }} onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{
-              const id = e.dataTransfer.getData('application/x-node-id');
-              const found = findNodeById(id);
-              if (!found) return;
-              onChangeState(removeFromAll(id, { ...state, counter: { ...state.counter, main: found } }));
-            }}>
+            <div
+              ref={(el) => { mainRefs.current.counter = el; }}
+              className="border rounded-md p-2"
+              style={{
+                borderColor: dropIndicator?.kind === "main" && dropIndicator.section === "counter" ? accent : sidebar.cardBorder,
+                background: dropIndicator?.kind === "main" && dropIndicator.section === "counter" ? accentBg : sidebar.inputBackground,
+              }}
+            >
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Main Point</div>
-              <div className="text-[13px]" style={{ color: sidebar.textPrimary }}>{state.counter.main?.text || '(select a node as main)'}</div>
+              {state.counter.main ? (
+                <div className="mt-1 text-[13px]" style={{ color: sidebar.textPrimary }}>
+                  <DraggableChip node={state.counter.main} source="counter-main" />
+                </div>
+              ) : (
+                <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select a node as main)</div>
+              )}
               <div className="mt-2 flex gap-2">
                 <button type="button" className="text-xs rounded-full border px-2 py-1 shadow-sm" style={{ color: sidebar.textPrimary, borderColor: state.target.section==='counter' && state.target.field==='main' ? accent : sidebar.cardBorder, background: state.target.section==='counter' && state.target.field==='main' ? accentBg : sidebar.cardBackground }} onMouseEnter={(e)=>{ (e.currentTarget as HTMLButtonElement).style.background = accentBg; (e.currentTarget as HTMLButtonElement).style.borderColor = accent; }} onMouseLeave={(e)=>{ (e.currentTarget as HTMLButtonElement).style.background = state.target.section==='counter' && state.target.field==='main' ? accentBg : sidebar.cardBackground; (e.currentTarget as HTMLButtonElement).style.borderColor = state.target.section==='counter' && state.target.field==='main' ? accent : sidebar.cardBorder; }} onClick={() => onChangeState({ ...state, target: { section: 'counter', field: 'main' } })}>Set Main</button>
               </div>
             </div>
             <div className="border rounded-md p-2" style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }}>
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Evidences</div>
-              {state.counter.evidences.length === 0 ? (
-                <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select nodes as evidences)</div>
-              ) : (
-                <div className="flex flex-wrap gap-2" onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{
-                  const id = e.dataTransfer.getData('application/x-node-id');
-                  const found = findNodeById(id);
-                  if (!found) return;
-                  const exists = state.counter.evidences.find(x=>x.id===id);
-                  if (!exists) onChangeState(removeFromAll(id, { ...state, counter: { ...state.counter, evidences: [...state.counter.evidences, found] } }));
-                }}>
-                  {state.counter.evidences.map((n) => (
-                    <DraggableChip key={n.id} node={n} source="ctr-evi" />
-                  ))}
-                </div>
-              )}
+              <div
+                ref={(el) => { listRefs.current["counter-evidences"] = el; }}
+                className="flex flex-col gap-2 min-h-[32px]"
+              >
+                {state.counter.evidences.length === 0 ? (
+                  <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select nodes as evidences)</div>
+                ) : (
+                  state.counter.evidences.map((n, idx) => (
+                    <React.Fragment key={n.id}>
+                      {dropIndicator?.kind === "list" && dropIndicator.list === "counter-evidences" && dropIndicator.index === idx && (
+                        <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                      )}
+                      <div>
+                        <DraggableChip node={n} source="counter-evidences" index={idx} />
+                      </div>
+                    </React.Fragment>
+                  ))
+                )}
+                {state.counter.evidences.length > 0 && dropIndicator?.kind === "list" && dropIndicator.list === "counter-evidences" && dropIndicator.index === state.counter.evidences.length && (
+                  <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                )}
+                {state.counter.evidences.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "counter-evidences" && (
+                  <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                )}
+              </div>
               {/* Drop instead of button */}
             </div>
           </div>
         </div>
 
         {/* Script Generation Section */}
-        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }} onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{
-          const id = e.dataTransfer.getData('application/x-node-id');
-          const found = state.pool.find((x)=>x.id===id);
-          if (!found) return;
-          onChangeState({ ...state, script: { outline: state.script.outline.find(x=>x.id===id) ? state.script.outline : [...state.script.outline, found] } });
-        }}>
+        <div className="rounded-lg p-3 border" style={{ background: sidebar.cardBackground, borderColor: sidebar.cardBorder }}>
           <div className="text-xs uppercase tracking-wide mb-2" style={{ color: sidebar.textMuted }}>Script Generation</div>
-          {state.script.outline.length === 0 ? (
-            <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select nodes to form an outline)</div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {state.script.outline.map((n) => (
-                <DraggableChip key={n.id} node={n} source="script" />
-              ))}
-            </div>
-          )}
+          <div
+            ref={(el) => { listRefs.current["script-outline"] = el; }}
+            className="flex flex-col gap-2 min-h-[32px]"
+          >
+            {state.script.outline.length === 0 ? (
+              <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select nodes to form an outline)</div>
+            ) : (
+              state.script.outline.map((n, idx) => (
+                <React.Fragment key={n.id}>
+                  {dropIndicator?.kind === "list" && dropIndicator.list === "script-outline" && dropIndicator.index === idx && (
+                    <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+                  )}
+                  <div>
+                    <DraggableChip node={n} source="script-outline" index={idx} />
+                  </div>
+                </React.Fragment>
+              ))
+            )}
+            {state.script.outline.length > 0 && dropIndicator?.kind === "list" && dropIndicator.list === "script-outline" && dropIndicator.index === state.script.outline.length && (
+              <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+            )}
+            {state.script.outline.length === 0 && dropIndicator?.kind === "list" && dropIndicator.list === "script-outline" && (
+              <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
+            )}
+          </div>
           <div className="mt-2 flex gap-2">
             <button type="button" className="text-xs rounded-full border px-3 py-1.5 shadow-sm" style={{ color: sidebar.textPrimary, borderColor: accent, background: accentBg }} onClick={() => onChangeState({ ...state, target: { section: 'script', field: 'outline' } })}>Add Outline Item (select mode)</button>
             {onGenerateScript && (
@@ -310,8 +665,29 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
           </div>
         </div>
       </div>
-    </motion.div>
+      </motion.div>
+      {activeDrag && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="rounded-md px-2 py-1 border text-[12px] pointer-events-none shadow-lg"
+            style={{
+              position: "fixed",
+              top: activeDrag.clientY - activeDrag.offsetY,
+              left: activeDrag.clientX - activeDrag.offsetX,
+              width: activeDrag.width,
+              height: activeDrag.height,
+              display: "flex",
+              alignItems: "center",
+              background: sidebar.inputBackground,
+              borderColor: sidebar.cardBorder,
+              color: sidebar.textPrimary,
+              zIndex: 1000,
+            }}
+          >
+            {getNodeLabel(activeDrag.node)}
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
-
-
