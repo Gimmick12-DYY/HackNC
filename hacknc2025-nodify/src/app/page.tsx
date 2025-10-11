@@ -223,7 +223,7 @@ function HomeContent() {
               </div>
               {debateHistory.length === 0 ? (
                 <p className="text-xs" style={{ color: sidebar.textSecondary }}>
-                  No debates yet. Select multiple nodes and choose "Run Debate" to generate one.
+                  No debates yet. Select multiple nodes and choose &ldquo;Run Debate&rdquo; to generate one.
                 </p>
               ) : (
                 <div className="space-y-3">
