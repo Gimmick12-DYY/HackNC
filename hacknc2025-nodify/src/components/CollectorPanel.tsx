@@ -329,11 +329,21 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
         return;
       }
       mutateState((draft) => {
+        // remove incoming from any previous location
         detachNode(draft, dragData.node.id);
         if (dropTarget.section === "argument") {
+          const prev = draft.argument.main;
           draft.argument.main = dragData.node;
+          // return previous main to pool if it exists and isn't the same as incoming
+          if (prev && prev.id !== dragData.node.id && !draft.pool.find((x) => x.id === prev.id)) {
+            draft.pool.push(prev);
+          }
         } else {
+          const prev = draft.counter.main;
           draft.counter.main = dragData.node;
+          if (prev && prev.id !== dragData.node.id && !draft.pool.find((x) => x.id === prev.id)) {
+            draft.pool.push(prev);
+          }
         }
       });
     }
@@ -530,13 +540,28 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
               ) : (
                 <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select a node as main)</div>
               )}
-              <div className="mt-2 flex gap-2">
-                <button type="button" className="text-xs rounded-full border px-2 py-1 shadow-sm"
-                  style={{ color: sidebar.textPrimary, borderColor: state.target.section==='argument' && state.target.field==='main' ? accent : sidebar.cardBorder, background: state.target.section==='argument' && state.target.field==='main' ? accentBg : sidebar.cardBackground }}
-                  onMouseEnter={(e)=>{ (e.currentTarget as HTMLButtonElement).style.background = accentBg; (e.currentTarget as HTMLButtonElement).style.borderColor = accent; }}
-                  onMouseLeave={(e)=>{ (e.currentTarget as HTMLButtonElement).style.background = state.target.section==='argument' && state.target.field==='main' ? accentBg : sidebar.cardBackground; (e.currentTarget as HTMLButtonElement).style.borderColor = state.target.section==='argument' && state.target.field==='main' ? accent : sidebar.cardBorder; }}
-                  onClick={() => onChangeState({ ...state, target: { section: 'argument', field: 'main' } })}>Set Main</button>
-              </div>
+              {/* Handle drop to set or replace main; push previous main to pool */}
+              <div
+                onDragOver={(e)=>e.preventDefault()}
+                onDrop={(e)=>{
+                  const id = e.dataTransfer.getData('application/x-node-id');
+                  if (!id) return;
+                  const incoming = (state.pool.find(x=>x.id===id) || state.argument.evidences.find(x=>x.id===id) || state.counter.evidences.find(x=>x.id===id) || state.script.outline.find(x=>x.id===id) || (state.counter.main?.id===id ? state.counter.main : null) || (state.argument.main?.id===id ? state.argument.main : null));
+                  if (!incoming) return;
+                  const prev = state.argument.main;
+                  const next = { ...state };
+                  // detach incoming from all
+                  next.pool = next.pool.filter(x=>x.id!==id);
+                  next.argument.evidences = next.argument.evidences.filter(x=>x.id!==id);
+                  next.counter.evidences = next.counter.evidences.filter(x=>x.id!==id);
+                  next.script.outline = next.script.outline.filter(x=>x.id!==id);
+                  if (next.counter.main?.id===id) next.counter.main = null;
+                  next.argument.main = incoming;
+                  // return previous main to pool
+                  if (prev && !next.pool.find(x=>x.id===prev.id)) next.pool = [...next.pool, prev];
+                  onChangeState(next);
+                }}
+              />
             </div>
             <div className="border rounded-md p-2" style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }}>
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Evidences</div>
@@ -590,9 +615,28 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
               ) : (
                 <div className="text-[13px]" style={{ color: sidebar.textMuted }}>(select a node as main)</div>
               )}
-              <div className="mt-2 flex gap-2">
-                <button type="button" className="text-xs rounded-full border px-2 py-1 shadow-sm" style={{ color: sidebar.textPrimary, borderColor: state.target.section==='counter' && state.target.field==='main' ? accent : sidebar.cardBorder, background: state.target.section==='counter' && state.target.field==='main' ? accentBg : sidebar.cardBackground }} onMouseEnter={(e)=>{ (e.currentTarget as HTMLButtonElement).style.background = accentBg; (e.currentTarget as HTMLButtonElement).style.borderColor = accent; }} onMouseLeave={(e)=>{ (e.currentTarget as HTMLButtonElement).style.background = state.target.section==='counter' && state.target.field==='main' ? accentBg : sidebar.cardBackground; (e.currentTarget as HTMLButtonElement).style.borderColor = state.target.section==='counter' && state.target.field==='main' ? accent : sidebar.cardBorder; }} onClick={() => onChangeState({ ...state, target: { section: 'counter', field: 'main' } })}>Set Main</button>
-              </div>
+              {/* Handle drop to set or replace main; push previous main to pool */}
+              <div
+                onDragOver={(e)=>e.preventDefault()}
+                onDrop={(e)=>{
+                  const id = e.dataTransfer.getData('application/x-node-id');
+                  if (!id) return;
+                  const incoming = (state.pool.find(x=>x.id===id) || state.argument.evidences.find(x=>x.id===id) || state.counter.evidences.find(x=>x.id===id) || state.script.outline.find(x=>x.id===id) || (state.argument.main?.id===id ? state.argument.main : null) || (state.counter.main?.id===id ? state.counter.main : null));
+                  if (!incoming) return;
+                  const prev = state.counter.main;
+                  const next = { ...state };
+                  // detach incoming from all
+                  next.pool = next.pool.filter(x=>x.id!==id);
+                  next.argument.evidences = next.argument.evidences.filter(x=>x.id!==id);
+                  next.counter.evidences = next.counter.evidences.filter(x=>x.id!==id);
+                  next.script.outline = next.script.outline.filter(x=>x.id!==id);
+                  if (next.argument.main?.id===id) next.argument.main = null;
+                  next.counter.main = incoming;
+                  // return previous main to pool
+                  if (prev && !next.pool.find(x=>x.id===prev.id)) next.pool = [...next.pool, prev];
+                  onChangeState(next);
+                }}
+              />
             </div>
             <div className="border rounded-md p-2" style={{ borderColor: sidebar.cardBorder, background: sidebar.inputBackground }}>
               <div className="text-[12px] mb-1" style={{ color: sidebar.textMuted }}>Evidences</div>
