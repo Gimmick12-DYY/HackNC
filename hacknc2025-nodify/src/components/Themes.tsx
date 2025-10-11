@@ -16,8 +16,6 @@ type ThemeOpacityRange = {
   scale: number;
 };
 
-export type ThemeId = "sunrise" | "midnight" | "aurora";
-
 export type ThemeGridConfig = {
   enabled?: boolean;
   lineColor: string;
@@ -111,6 +109,8 @@ export type ThemeDefinition = {
     };
   };
 };
+
+export type ThemeId = "sunrise" | "obsidian" | "morandi";
 
 const SUNRISE_THEME: ThemeDefinition = {
   id: "sunrise",
@@ -211,212 +211,212 @@ const SUNRISE_THEME: ThemeDefinition = {
   },
 };
 
-const MIDNIGHT_THEME: ThemeDefinition = {
-  id: "midnight",
-  name: "Midnight Glow",
-  icon: "🌙",
-  description: "Dark mode grid layered with neon attention cues.",
-  previewColors: ["#38bdf8", "#a855f7", "#f472b6"],
+const OBSIDIAN_DARK_THEME: ThemeDefinition = {
+  id: "obsidian",
+  name: "Obsidian Depths",
+  icon: "🪶",
+  description: "A pure dark interface with subtle obsidian-inspired glow and muted cyan nodes.",
+  previewColors: ["#8ab4f8", "#bb86fc", "#03dac6"],
   canvas: {
     background:
-      "radial-gradient(140% 140% at 15% 20%, #1e293b 0%, #0f172a 50%, #020617 100%)",
+      "radial-gradient(120% 140% at 20% 25%, #0b0b0c 0%, #0a0a0b 40%, #000000 100%)",
     grid: {
       enabled: false,
-      lineColor: "#334155",
-      dotColor: "#1e293b",
-      lineOpacity: { min: 0.32, max: 0.6, scale: 0.28 },
-      dotOpacity: { min: 0.28, max: 0.5, scale: 0.3 },
+      lineColor: "#1c1c1d",
+      dotColor: "#101011",
+      lineOpacity: { min: 0.2, max: 0.45, scale: 0.25 },
+      dotOpacity: { min: 0.15, max: 0.35, scale: 0.22 },
     },
     origin: {
-      fill: "rgba(56, 189, 248, 0.9)",
-      stroke: "#38bdf8",
-      core: "#0ea5e9",
+      fill: "rgba(138, 180, 248, 0.9)",
+      stroke: "#8ab4f8",
+      core: "#1e90ff",
     },
   },
   node: {
     palette: {
-      idea: "#38bdf8",
-      argument: "#f472b6",
-      counter: "#34d399",
-      reference: "#eab308",
-      analogy: "#a855f7",
-      default: "#7dd3fc",
-    },
-    backgroundAlpha: 0.2,
-    borderAlpha: 0.55,
-    textColor: { regular: "#f8fafc", minimized: "#0f172a" },
-    label: {
-      textColor: "#e2e8f0",
-      background: "rgba(15, 23, 42, 0.86)",
-      opacity: 0.86,
-      blur: 12,
-      letterSpacing: 0.2,
-    },
-    shadow: {
-      default: "0 12px 26px rgba(2, 6, 23, 0.55)",
-      highlight: "0 0 36px rgba(56, 189, 248, 0.7)",
-    },
-    highlightStroke: "#38bdf8",
-    minimizedPalette: [
-      "#38bdf8",
-      "#f472b6",
-      "#34d399",
-      "#eab308",
-      "#a855f7",
-      "#22d3ee",
-    ],
-    opacityLevels: { 0: 1, 1: 0.88, 2: 0.72, 3: 0.55, default: 0.4 },
-  },
-  lines: {
-    default: { stroke: "rgba(37, 99, 235, 0.35)" },
-    connected: { stroke: "rgba(56, 189, 248, 0.85)" },
-    dimmed: { stroke: "rgba(30, 58, 138, 0.18)" },
-    preview: { stroke: "rgba(125, 211, 252, 0.55)", opacity: 0.75 },
-  },
-  ui: {
-    header: {
-      background: "rgba(15, 23, 42, 0.82)",
-      border: "rgba(51, 65, 85, 0.75)",
-      text: "#f8fafc",
-      subtext: "#94a3b8",
-    },
-    sidebar: {
-      background: "rgba(15, 23, 42, 0.78)",
-      border: "rgba(51, 65, 85, 0.8)",
-      headerBackground:
-        "linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%)",
-      headerText: "#e2e8f0",
-      headerSubtext: "#94a3b8",
-      cardBackground: "rgba(15, 23, 42, 0.85)",
-      cardBorder: "rgba(51, 65, 85, 0.9)",
-      textPrimary: "#e2e8f0",
-      textSecondary: "#cbd5f5",
-      textMuted: "#94a3b8",
-      inputBackground: "rgba(15, 23, 42, 0.9)",
-      inputBorder: "rgba(56, 189, 248, 0.4)",
-      inputFocus: "#38bdf8",
-      inputText: "#f8fafc",
-    },
-    floatingButton: {
-      background: "#1f2937",
-      hover: "#0f172a",
-      text: "#e2e8f0",
-      indicator: "#f87171",
-    },
-    generateButton: {
-      background: "#38bdf8",
-      hover: "#0ea5e9",
-      text: "#0f172a",
-      indicator: "#22d3ee",
-    },
-  },
-};
-
-const AURORA_THEME: ThemeDefinition = {
-  id: "aurora",
-  name: "Aurora Pulse",
-  icon: "🚀",
-  description: "Electric synthwave gradient made for AI explorations.",
-  previewColors: ["#22d3ee", "#a855f7", "#f97316"],
-  canvas: {
-    background:
-      "linear-gradient(120deg, #0ea5e9 0%, #312e81 40%, #7c3aed 70%, #a855f7 100%)",
-    grid: {
-      enabled: false,
-      lineColor: "#1f2937",
-      dotColor: "#0f172a",
-      lineOpacity: { min: 0.28, max: 0.6, scale: 0.34 },
-      dotOpacity: { min: 0.2, max: 0.5, scale: 0.33 },
-    },
-    origin: {
-      fill: "rgba(236, 72, 153, 0.9)",
-      stroke: "#ec4899",
-      core: "#f472b6",
-    },
-  },
-  node: {
-    palette: {
-      idea: "#22d3ee",
-      argument: "#f97316",
-      counter: "#34d399",
-      reference: "#facc15",
-      analogy: "#c084fc",
-      default: "#e0f2fe",
+      idea: "#8ab4f8",
+      argument: "#bb86fc",
+      counter: "#03dac6",
+      reference: "#ffd166",
+      analogy: "#f48fb1",
+      default: "#9ca3af",
     },
     backgroundAlpha: 0.18,
-    borderAlpha: 0.5,
-    textColor: { regular: "#0f172a", minimized: "#0f172a" },
+    borderAlpha: 0.52,
+    textColor: { regular: "#f9fafb", minimized: "#18181b" },
     label: {
-      textColor: "#0f172a",
-      background: "rgba(248, 250, 252, 0.92)",
-      opacity: 0.92,
+      textColor: "#e5e7eb",
+      background: "rgba(17, 17, 17, 0.9)",
+      opacity: 0.88,
       blur: 10,
       letterSpacing: 0.15,
     },
     shadow: {
-      default: "0 10px 24px rgba(15, 23, 42, 0.3)",
-      highlight: "0 0 34px rgba(236, 72, 153, 0.45)",
+      default: "0 10px 28px rgba(0, 0, 0, 0.6)",
+      highlight: "0 0 34px rgba(138, 180, 248, 0.6)",
     },
-    highlightStroke: "#ec4899",
+    highlightStroke: "#8ab4f8",
     minimizedPalette: [
-      "#22d3ee",
-      "#38bdf8",
-      "#a855f7",
-      "#f97316",
-      "#facc15",
-      "#34d399",
+      "#8ab4f8",
+      "#bb86fc",
+      "#03dac6",
+      "#ffd166",
+      "#f48fb1",
+      "#9ca3af",
     ],
-    opacityLevels: { 0: 1, 1: 0.9, 2: 0.75, 3: 0.58, default: 0.48 },
+    opacityLevels: { 0: 1, 1: 0.88, 2: 0.7, 3: 0.5, default: 0.35 },
   },
   lines: {
-    default: { stroke: "rgba(14, 165, 233, 0.4)" },
-    connected: { stroke: "rgba(236, 72, 153, 0.9)" },
-    dimmed: { stroke: "rgba(14, 165, 233, 0.18)" },
-    preview: { stroke: "rgba(236, 72, 153, 0.65)", opacity: 0.7 },
+    default: { stroke: "rgba(138, 180, 248, 0.35)" },
+    connected: { stroke: "rgba(187, 134, 252, 0.8)" },
+    dimmed: { stroke: "rgba(3, 218, 198, 0.15)" },
+    preview: { stroke: "rgba(138, 180, 248, 0.55)", opacity: 0.7 },
   },
   ui: {
     header: {
-      background: "rgba(15, 23, 42, 0.55)",
-      border: "rgba(99, 102, 241, 0.6)",
-      text: "#f8fafc",
-      subtext: "#e0f2fe",
+      background: "rgba(10, 10, 11, 0.88)",
+      border: "rgba(31, 31, 32, 0.75)",
+      text: "#f9fafb",
+      subtext: "#9ca3af",
     },
     sidebar: {
-      background: "rgba(15, 23, 42, 0.7)",
-      border: "rgba(99, 102, 241, 0.45)",
+      background: "rgba(15, 15, 16, 0.88)",
+      border: "rgba(31, 31, 32, 0.8)",
       headerBackground:
-        "linear-gradient(120deg, rgba(14, 165, 233, 0.75) 0%, rgba(30, 64, 175, 0.75) 100%)",
-      headerText: "#f8fafc",
-      headerSubtext: "#e0f2fe",
-      cardBackground: "rgba(15, 23, 42, 0.8)",
-      cardBorder: "rgba(99, 102, 241, 0.6)",
-      textPrimary: "#f8fafc",
-      textSecondary: "#e0f2fe",
-      textMuted: "#cbd5f5",
-      inputBackground: "rgba(15, 23, 42, 0.82)",
-      inputBorder: "rgba(236, 72, 153, 0.45)",
-      inputFocus: "#ec4899",
-      inputText: "#f8fafc",
+        "linear-gradient(135deg, rgba(24, 24, 25, 0.95) 0%, rgba(10, 10, 11, 0.95) 100%)",
+      headerText: "#f9fafb",
+      headerSubtext: "#a1a1aa",
+      cardBackground: "rgba(20, 20, 21, 0.88)",
+      cardBorder: "rgba(38, 38, 39, 0.9)",
+      textPrimary: "#e5e7eb",
+      textSecondary: "#d1d5db",
+      textMuted: "#9ca3af",
+      inputBackground: "rgba(10, 10, 11, 0.92)",
+      inputBorder: "rgba(138, 180, 248, 0.45)",
+      inputFocus: "#8ab4f8",
+      inputText: "#f9fafb",
     },
     floatingButton: {
-      background: "#312e81",
-      hover: "#1e1b4b",
-      text: "#f8fafc",
-      indicator: "#f472b6",
+      background: "#18181b",
+      hover: "#0f0f10",
+      text: "#f9fafb",
+      indicator: "#bb86fc",
     },
     generateButton: {
-      background: "#ec4899",
-      hover: "#db2777",
-      text: "#f8fafc",
-      indicator: "#22d3ee",
+      background: "#8ab4f8",
+      hover: "#60a5fa",
+      text: "#0b0b0c",
+      indicator: "#03dac6",
+    },
+  },
+};
+
+const MORANDI_THEME: ThemeDefinition = {
+  id: "morandi",
+  name: "Avocado Mist",
+  icon: "🥑",
+  description: "A serene Morandi palette with pale avocado tones and soft neutrals.",
+  previewColors: ["#b8cba3", "#a8b6a1", "#c2b8a3"],
+  canvas: {
+    background:
+      "linear-gradient(180deg, #dbe3d3 0%, #cfd9c2 45%, #b8cba3 100%)",
+    grid: {
+      enabled: false,
+      lineColor: "#bcc6b0",
+      dotColor: "#c7d3b8",
+      lineOpacity: { min: 0.2, max: 0.45, scale: 0.3 },
+      dotOpacity: { min: 0.2, max: 0.4, scale: 0.25 },
+    },
+    origin: {
+      fill: "rgba(184, 203, 163, 0.95)",
+      stroke: "#a8b6a1",
+      core: "#9caf8f",
+    },
+  },
+  node: {
+    palette: {
+      idea: "#a8b6a1",
+      argument: "#c2b8a3",
+      counter: "#b8cba3",
+      reference: "#d9c6a3",
+      analogy: "#a3b8b1",
+      default: "#cfd9c2",
+    },
+    backgroundAlpha: 0.22,
+    borderAlpha: 0.48,
+    textColor: { regular: "#38413c", minimized: "#697265" },
+    label: {
+      textColor: "#2f3a33",
+      background: "rgba(255, 255, 255, 0.78)",
+      opacity: 0.85,
+      blur: 10,
+      letterSpacing: 0.15,
+    },
+    shadow: {
+      default: "0 8px 20px rgba(56, 65, 60, 0.25)",
+      highlight: "0 0 30px rgba(184, 203, 163, 0.55)",
+    },
+    highlightStroke: "#a8b6a1",
+    minimizedPalette: [
+      "#b8cba3",
+      "#c2b8a3",
+      "#a8b6a1",
+      "#d9c6a3",
+      "#a3b8b1",
+      "#cfd9c2",
+    ],
+    opacityLevels: { 0: 1, 1: 0.9, 2: 0.75, 3: 0.58, default: 0.45 },
+  },
+  lines: {
+    default: { stroke: "rgba(168, 182, 161, 0.4)" },
+    connected: { stroke: "rgba(184, 203, 163, 0.85)" },
+    dimmed: { stroke: "rgba(168, 182, 161, 0.2)" },
+    preview: { stroke: "rgba(168, 182, 161, 0.55)", opacity: 0.7 },
+  },
+  ui: {
+    header: {
+      background: "rgba(232, 236, 228, 0.82)",
+      border: "rgba(184, 203, 163, 0.65)",
+      text: "#38413c",
+      subtext: "#6c756b",
+    },
+    sidebar: {
+      background: "rgba(255, 255, 255, 0.9)",
+      border: "rgba(200, 210, 190, 0.8)",
+      headerBackground:
+        "linear-gradient(135deg, rgba(243, 245, 238, 0.95) 0%, rgba(219, 227, 211, 0.95) 100%)",
+      headerText: "#2f3a33",
+      headerSubtext: "#6c756b",
+      cardBackground: "rgba(248, 250, 245, 0.9)",
+      cardBorder: "rgba(200, 210, 190, 0.9)",
+      textPrimary: "#38413c",
+      textSecondary: "#4b554f",
+      textMuted: "#6c756b",
+      inputBackground: "rgba(255, 255, 255, 0.9)",
+      inputBorder: "rgba(184, 203, 163, 0.5)",
+      inputFocus: "#a8b6a1",
+      inputText: "#2f3a33",
+    },
+    floatingButton: {
+      background: "#a8b6a1",
+      hover: "#9caf8f",
+      text: "#ffffff",
+      indicator: "#c2b8a3",
+    },
+    generateButton: {
+      background: "#b8cba3",
+      hover: "#a8b6a1",
+      text: "#2f3a33",
+      indicator: "#c2b8a3",
     },
   },
 };
 
 const THEME_REGISTRY: Record<ThemeId, ThemeDefinition> = {
-  sunrise: SUNRISE_THEME,
-  midnight: MIDNIGHT_THEME,
-  aurora: AURORA_THEME,
+  obsidian: OBSIDIAN_DARK_THEME,
+  morandi: MORANDI_THEME,
+  sunrise: SUNRISE_THEME
 };
 
 const THEME_LIST = Object.values(THEME_REGISTRY);
