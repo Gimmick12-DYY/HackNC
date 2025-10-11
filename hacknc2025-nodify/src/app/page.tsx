@@ -22,7 +22,21 @@ function HomeContent() {
   const [collectorOpen, setCollectorOpen] = React.useState(false);
   const [collectorWidth, setCollectorWidth] = React.useState(360);
   const [collectorSelectionMode, setCollectorSelectionMode] = React.useState(false);
-  const [collectorItems, setCollectorItems] = React.useState<NodeItem[]>([]);
+  type CollectedBucket = { main: NodeItem | null; evidences: NodeItem[] };
+  type CollectorState = {
+    argument: CollectedBucket;
+    counter: CollectedBucket;
+    script: { outline: NodeItem[] };
+    target: { section: 'argument' | 'counter' | 'script'; field: 'main' | 'evidence' | 'outline' };
+    pool: NodeItem[];
+  };
+  const [collector, setCollector] = React.useState<CollectorState>({
+    argument: { main: null, evidences: [] },
+    counter: { main: null, evidences: [] },
+    script: { outline: [] },
+    target: { section: 'argument', field: 'evidence' },
+    pool: [],
+  });
   const [infoOpen, setInfoOpen] = React.useState(false);
   const [infoWidth, setInfoWidth] = React.useState(320);
   const [debateHistory, setDebateHistory] = React.useState<DebateRecord[]>([]);
@@ -341,7 +355,13 @@ function HomeContent() {
               registerDebateActions={handleRegisterDebateActions}
               onCollectorToggleSelect={() => setCollectorSelectionMode((v) => !v)}
               collectorSelectionMode={collectorSelectionMode}
-              onCollectorPickNode={(n) => setCollectorItems((items) => items.some((i) => i.id === n.id) ? items : [...items, n])}
+              onCollectorPickNode={(n) => {
+                setCollector((prev) => {
+                  const next = { ...prev } as CollectorState;
+                  if (!next.pool.find((x)=>x.id===n.id)) next.pool = [...next.pool, n];
+                  return { ...next };
+                });
+              }}
             />
           </AttentionProvider>
         </main>
@@ -358,9 +378,25 @@ function HomeContent() {
             width={collectorWidth}
             onResize={setCollectorWidth}
             onClose={() => setCollectorOpen(false)}
-            items={collectorItems}
+            state={collector}
+            onChangeState={setCollector}
             selectionMode={collectorSelectionMode}
             onToggleSelectionMode={() => setCollectorSelectionMode((v) => !v)}
+            onGenerateScript={async () => {
+              const arg = collector.argument;
+              const ctr = collector.counter;
+              const outline = collector.script.outline;
+              const buildList = (items: NodeItem[]) => items.map((n,i)=>`${i+1}. ${n.full || n.text || n.phrase || n.short || n.id}`).join("\n");
+              const prompt = `Craft a concise, engaging script supporting the main point using its evidences, and briefly rebut the anti-argument with its evidences.\n\nMain point:\n${arg.main?.full || arg.main?.text || ''}\n\nEvidences supporting the main point:\n${buildList(arg.evidences)}\n\nAnti-argument:\n${ctr.main?.full || ctr.main?.text || ''}\n\nEvidences for anti-argument:\n${buildList(ctr.evidences)}\n\nOptional outline cues (order hints):\n${buildList(outline)}\n\nOutput a single cohesive script (no JSON).`;
+              try {
+                const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, count: 1, phraseLength: params.phraseLength, temperature: params.temperature }) });
+                const data = await res.json();
+                const text = Array.isArray(data.items) && data.items[0] ? (data.items[0].full || data.items[0].text || String(data.items[0])) : '';
+                return String(text || '');
+              } catch {
+                return '';
+              }
+            }}
           />
         )}
       </div>
