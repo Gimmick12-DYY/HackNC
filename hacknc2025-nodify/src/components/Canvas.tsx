@@ -477,9 +477,28 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       }
 
       const updates: Array<[string, { x: number; y: number }]> = [];
-      for (const id of ids) { const c = nextCenters.get(id) || positions.get(id)!; updates.push([id, { x: c.x - (c.size / 2), y: c.y - (c.size / 2) }]); }
+      for (const id of ids) {
+        const c = nextCenters.get(id) || positions.get(id)!;
+        const nextX = c.x - (c.size / 2);
+        const nextY = c.y - (c.size / 2);
+        const existing = currentNodes[id];
+        if (!existing) continue;
+        if (Math.abs(existing.x - nextX) < 0.01 && Math.abs(existing.y - nextY) < 0.01) continue;
+        updates.push([id, { x: nextX, y: nextY }]);
+      }
       if (updates.length) {
-        setNodes((prev) => { const base = { ...prev }; for (const [id, pos] of updates) { const n = base[id]; if (!n) continue; base[id] = { ...n, x: pos.x, y: pos.y }; } return base; });
+        setNodes((prev) => {
+          let base = prev;
+          let mutated = false;
+          for (const [id, pos] of updates) {
+            const node = base[id];
+            if (!node) continue;
+            if (Math.abs(node.x - pos.x) < 0.01 && Math.abs(node.y - pos.y) < 0.01) continue;
+            if (!mutated) { base = { ...prev }; mutated = true; }
+            base[id] = { ...node, x: pos.x, y: pos.y };
+          }
+          return mutated ? base : prev;
+        });
       }
 
       if (draggingNodesRef.current.size === 0) {
