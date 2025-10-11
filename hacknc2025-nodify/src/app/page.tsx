@@ -4,7 +4,8 @@ import React from "react";
 import Canvas from "@/components/Canvas";
 import Dashboard from "@/components/Dashboard";
 import CompareSection from "@/components/CompareSection";
-import { DashboardParams, DebateRecord, InfoData } from "@/components/types";
+import CollectorPanel from "@/components/CollectorPanel";
+import { DashboardParams, DebateRecord, InfoData, NodeItem } from "@/components/types";
 import { AttentionProvider } from "@/components/Attention";
 import { ThemeProvider, useTheme, Themes, hexToRgba } from "@/components/Themes";
 import InfoRoundedIcon from "@mui/icons-material/InfoRounded";
@@ -18,6 +19,10 @@ function HomeContent() {
     temperature: 0.7,
   });
   const [info, setInfo] = React.useState<InfoData | null>(null);
+  const [collectorOpen, setCollectorOpen] = React.useState(false);
+  const [collectorWidth, setCollectorWidth] = React.useState(360);
+  const [collectorSelectionMode, setCollectorSelectionMode] = React.useState(false);
+  const [collectorItems, setCollectorItems] = React.useState<NodeItem[]>([]);
   const [infoOpen, setInfoOpen] = React.useState(false);
   const [infoWidth, setInfoWidth] = React.useState(320);
   const [debateHistory, setDebateHistory] = React.useState<DebateRecord[]>([]);
@@ -81,7 +86,8 @@ function HomeContent() {
   const header = theme.ui.header;
   const generateButton = theme.ui.generateButton;
   const floatingButton = theme.ui.floatingButton;
-  const stackRight = (infoOpen ? infoWidth + 32 : 24);
+  const activePanelWidth = collectorOpen ? collectorWidth : (infoOpen ? infoWidth : 0);
+  const stackRight = (collectorOpen || infoOpen) ? activePanelWidth + 32 : 24;
   const baseBottom = 24;
   const buttonSpacing = 72;
   const dashboardBottom = baseBottom;
@@ -333,15 +339,28 @@ function HomeContent() {
               onRequestInfo={setInfo}
               onDebateHistoryUpdate={setDebateHistory}
               registerDebateActions={handleRegisterDebateActions}
+              onCollectorToggleSelect={() => setCollectorSelectionMode((v) => !v)}
+              collectorSelectionMode={collectorSelectionMode}
+              onCollectorPickNode={(n) => setCollectorItems((items) => items.some((i) => i.id === n.id) ? items : [...items, n])}
             />
           </AttentionProvider>
         </main>
-        {infoOpen && (
+        {infoOpen && !collectorOpen && (
           <CompareSection
             info={info}
             width={infoWidth}
             onResize={setInfoWidth}
             onClose={() => setInfoOpen(false)}
+          />
+        )}
+        {collectorOpen && (
+          <CollectorPanel
+            width={collectorWidth}
+            onResize={setCollectorWidth}
+            onClose={() => setCollectorOpen(false)}
+            items={collectorItems}
+            selectionMode={collectorSelectionMode}
+            onToggleSelectionMode={() => setCollectorSelectionMode((v) => !v)}
           />
         )}
       </div>
@@ -359,7 +378,7 @@ function HomeContent() {
         ref={generateButtonRef}
         className="fixed bottom-6 z-50 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 group overflow-hidden"
         style={{
-          background: generateButton.background,
+          background: collectorOpen ? generateButton.hover : generateButton.background,
           color: generateButton.text,
           width: "56px",
           height: "56px",
@@ -375,34 +394,30 @@ function HomeContent() {
         onMouseLeave={(e) => {
           e.currentTarget.style.width = "56px";
           e.currentTarget.style.paddingRight = "16px";
-          e.currentTarget.style.background = generateButton.background;
+          e.currentTarget.style.background = collectorOpen ? generateButton.hover : generateButton.background;
         }}
-        aria-label="Generate Ideas"
+        aria-label={collectorOpen ? "Close Collector" : "Open Collector"}
+        onClick={() => {
+          setCollectorOpen((v) => !v);
+          if (!collectorOpen) setInfoOpen(false);
+        }}
       >
-        <svg
-          className="w-5 h-5 flex-shrink-0"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-          />
+        <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
         </svg>
         <span className="text-sm font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          Generate
+          {collectorOpen ? "Close" : "Generate"}
         </span>
-        <div
-          className="absolute -top-1 -right-1 w-3 h-3 rounded-full animate-ping"
-          style={{ backgroundColor: generateButton.indicator }}
-        ></div>
+        {!collectorOpen && (
+          <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full animate-ping" style={{ backgroundColor: generateButton.indicator }} />
+        )}
       </button>
       <button
         ref={infoButtonRef}
-        onClick={() => setInfoOpen((v) => !v)}
+        onClick={() => {
+          setInfoOpen((v) => !v);
+          if (!infoOpen) setCollectorOpen(false);
+        }}
         className="fixed z-50 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 group overflow-hidden"
         style={{
           background: infoOpen ? floatingButton.hover : floatingButton.background,

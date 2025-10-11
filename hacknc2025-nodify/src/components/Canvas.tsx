@@ -36,6 +36,10 @@ type Props = {
   onRequestInfo?: (info: InfoData | null) => void;
   onDebateHistoryUpdate?: (history: DebateRecord[]) => void;
   registerDebateActions?: (actions: { deleteDebate: (id: string) => void }) => void;
+  // Collector integration
+  onCollectorToggleSelect?: () => void;
+  collectorSelectionMode?: boolean;
+  onCollectorPickNode?: (n: NodeItem) => void;
 };
 
 type NodeMap = Record<string, NodeItem>;
@@ -157,7 +161,7 @@ const NODE_HOLD_MOVE_THRESHOLD = 24;
 const PREVIEW_PLACEHOLDER_SIZE = 150;
 const MAX_GENERATED_COUNT = 12;
 
-export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, registerDebateActions }: Props) {
+export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, registerDebateActions, onCollectorToggleSelect, collectorSelectionMode = false, onCollectorPickNode }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [groupAssignments, setGroupAssignments] = useState<Record<string, string>>({});
@@ -376,8 +380,8 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
 
   const commitFocus = useCallback(
     (id: string | null) => {
-      committedFocusIdRef.current = id;
-      setFocusedNode(id);
+    committedFocusIdRef.current = id;
+    setFocusedNode(id);
     },
     [setFocusedNode]
   );
@@ -1235,7 +1239,7 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
     };
     setNodes((prev) => ({ ...prev, [id]: node }));
     if (parentId) setEdges((e) => [...e, [parentId, id]]);
-    setSelectedIds(new Set([id]));
+  setSelectedIds(new Set([id]));
     schedulePhysicsSettle();
     return id;
   };
@@ -1773,6 +1777,15 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
 
   // 点击节点：单选并打开信息
   const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
+    // Collector selection mode: collect and exit early
+    if (collectorSelectionMode) {
+      const node = nodes[id];
+      if (node) {
+        onCollectorPickNode?.(node);
+      }
+      event?.stopPropagation();
+      return;
+    }
     if (pendingConnection) {
       const success = connectNodes(pendingConnection.childId, id);
       if (success) {
@@ -1804,7 +1817,7 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
     const s = new Set<string>([id]);
     setSelectedIds(s);
     commitFocus(id);
-  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection]);
+  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection, collectorSelectionMode, nodes, onCollectorPickNode]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
@@ -1908,8 +1921,8 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
   useEffect(() => {
     if (!onRequestInfo) return;
     if (selectedIds.size === 1) {
-      const [id] = Array.from(selectedIds);
-      emitInfoFor(id);
+    const [id] = Array.from(selectedIds);
+    emitInfoFor(id);
       return;
     }
     if (selectedIds.size === 0) {
@@ -2794,16 +2807,16 @@ Respond with valid JSON only.`;
         return;
       }
       previewPointerAppliedRef.current = next;
-      setPreviewState((prev) => {
+    setPreviewState((prev) => {
         if (prev.parentId !== next.nodeId) return prev;
         if (prev.pointerClient && prev.pointerClient.x === next.clientX && prev.pointerClient.y === next.clientY) {
-          return prev;
-        }
-        return {
-          ...prev,
+        return prev;
+      }
+      return {
+        ...prev,
           pointerClient: { x: next.clientX, y: next.clientY },
-        };
-      });
+      };
+    });
     });
   }, [cancelNodeHold]);
 
@@ -2825,7 +2838,7 @@ Respond with valid JSON only.`;
         const parent = nodes[p];
         const child = nodes[c];
         if (!parent || !child) return null;
-
+        
         // 使用 NodeCard 的同一基准直径逻辑来获取可视中心
         const level0 = (NodeVisualConfig.SIZE_LEVELS as Record<number, number>)[0];
         const getBaseDiameter = (n: NodeItem) => {
@@ -2849,7 +2862,7 @@ Respond with valid JSON only.`;
         const pY = parent.y + parentBase / 2;
         const cX = child.x + childBase / 2;
         const cY = child.y + childBase / 2;
-
+        
         // 从子指向父，端点裁剪到各自节点圆周
         const dx = pX - cX;
         const dy = pY - cY;
@@ -2899,15 +2912,15 @@ Respond with valid JSON only.`;
     }
 
     let actualGridSize = gridSize;
-
+    
     while (actualGridSize * scale < 20 && actualGridSize < 200) {
       actualGridSize *= 2;
     }
-
+    
     while (actualGridSize * scale > 200 && actualGridSize > 12.5) {
       actualGridSize /= 2;
     }
-
+    
     const scaledGridSize = actualGridSize * scale;
     const adjustedOffsetX =
       ((offsetX % scaledGridSize) + scaledGridSize) % scaledGridSize;
@@ -2922,7 +2935,7 @@ Respond with valid JSON only.`;
 
     const lineOpacity = computeOpacity(gridConfig.lineOpacity);
     const dotOpacity = computeOpacity(gridConfig.dotOpacity);
-
+    
     return {
       size: scaledGridSize,
       offsetX: adjustedOffsetX,
@@ -3038,25 +3051,25 @@ Respond with valid JSON only.`;
                 ? 'arrow-dimmed'
                 : 'arrow-default';
             return (
-              <motion.line
-                key={key}
-                animate={{
+            <motion.line
+              key={key}
+              animate={{
                   x1,
                   y1,
                   x2,
                   y2,
-                }}
-                initial={{
+              }}
+              initial={{
                   x1,
                   y1,
                   x2,
                   y2,
-                }}
-                transition={
-                  isDragging
+              }}
+              transition={
+                isDragging
                     ? { duration: 0 }
-                    : {
-                        type: "spring",
+                  : {
+                      type: "spring",
                         stiffness: 520,
                         damping: 36,
                         mass: 0.6,
@@ -3065,11 +3078,11 @@ Respond with valid JSON only.`;
                 }
                 stroke={strokeColor}
                 strokeWidth={lineStrokeWidth}
-                style={{ 
-                  vectorEffect: 'non-scaling-stroke' // 保持线条粗细不受缩放影响
-                }}
+              style={{ 
+                vectorEffect: 'non-scaling-stroke' // 保持线条粗细不受缩放影响
+              }}
                 markerEnd={`url(#${markerId})`}
-              />
+            />
             );
           })}
           {previewState.anchor &&
@@ -3117,24 +3130,24 @@ Respond with valid JSON only.`;
           const nodeForRender =
             assignment && n.groupId !== assignment ? { ...n, groupId: assignment } : n;
           return (
-            <NodeCard
-              key={n.id}
+          <NodeCard
+            key={n.id}
               node={nodeForRender}
-              onMove={onMove}
-              onMoveEnd={onMoveEnd}
-              onContextMenu={onNodeContextMenu}
-              highlight={selectedIds.has(n.id)}
-              screenToCanvas={screenToCanvas}
-              onHoldStart={handleNodeHoldStart}
-              onHoldMove={handleNodeHoldMove}
-              onHoldEnd={handleNodeHoldEnd}
-              onDoubleClickNode={handleNodeDoubleClick}
-              onHoverNode={handleNodeHover}
-              onHoverLeave={handleNodeHoverLeave}
-              onClickNode={handleNodeClick}
-              distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
+            onMove={onMove}
+            onMoveEnd={onMoveEnd}
+            onContextMenu={onNodeContextMenu}
+            highlight={selectedIds.has(n.id)}
+            screenToCanvas={screenToCanvas}
+            onHoldStart={handleNodeHoldStart}
+            onHoldMove={handleNodeHoldMove}
+            onHoldEnd={handleNodeHoldEnd}
+            onDoubleClickNode={handleNodeDoubleClick}
+            onHoverNode={handleNodeHover}
+            onHoverLeave={handleNodeHoverLeave}
+            onClickNode={handleNodeClick}
+            distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
               isGlobalDragging={isDragging}
-            />
+          />
           );
         })}
       </div>
@@ -3246,13 +3259,13 @@ Respond with valid JSON only.`;
                 Get info
               </button>
               {Object.keys(nodes).length > 1 && (
-                <button
-                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+              <button
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
                   onClick={() => handleNodeMenuAction('connect', contextMenu.nodeId!)}
-                >
+              >
                   <LinkRoundedIcon fontSize="small" className="text-indigo-500" />
                   Connect to Node
-                </button>
+              </button>
               )}
               <button
                 className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
@@ -3394,9 +3407,9 @@ Respond with valid JSON only.`;
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                     </svg>
                   </span>
-                  <span className="inline-flex min-w-[2.25rem] items-center justify-center rounded-full bg-sky-500/20 px-2 py-1 text-xs font-semibold text-sky-100">
-                    ×{expandOverlay.count}
-                  </span>
+                <span className="inline-flex min-w-[2.25rem] items-center justify-center rounded-full bg-sky-500/20 px-2 py-1 text-xs font-semibold text-sky-100">
+                  ×{expandOverlay.count}
+                </span>
                   <span
                     role="button"
                     tabIndex={0}
@@ -3500,7 +3513,7 @@ Respond with valid JSON only.`;
                           <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                         </svg>
                       </span>
-                      <span className="text-sm font-semibold text-white/90">{expandOverlay.count}</span>
+                    <span className="text-sm font-semibold text-white/90">{expandOverlay.count}</span>
                       <span
                         role="button"
                         tabIndex={0}
@@ -3626,7 +3639,7 @@ Respond with valid JSON only.`;
               className="pointer-events-auto text-sm bg-white/80 backdrop-blur rounded-2xl px-4 py-2 shadow border border-white/60 max-w-xl text-left select-none"
               style={{ color: theme.ui.sidebar.textSecondary, caretColor: "transparent" }}
             >
-              Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select • Right-click for tools
+        Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select • Right-click for tools
             </motion.div>
           )}
         </AnimatePresence>
