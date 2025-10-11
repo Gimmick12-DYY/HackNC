@@ -12,13 +12,22 @@ type Props = {
   params: DashboardParams;
   onChange: (p: DashboardParams) => void;
   onHover?: (hovered: boolean) => void;
+  buttonRight?: number;
+  buttonBottom?: number;
 };
 
-export default function Dashboard({ open, onToggle, params, onChange, onHover }: Props) {
+export default function Dashboard({
+  open,
+  onToggle,
+  params,
+  onChange,
+  onHover,
+  buttonRight = 24,
+  buttonBottom = 24,
+}: Props) {
   const { theme } = useTheme();
   const floatingButton = theme.ui.floatingButton;
   const sidebar = theme.ui.sidebar;
-
   return (
     <>
       {/* Floating Dashboard Button - Expands on Hover */}
@@ -31,6 +40,8 @@ export default function Dashboard({ open, onToggle, params, onChange, onHover }:
           width: "56px",
           height: "56px",
           padding: "16px",
+          right: `${buttonRight}px`,
+          bottom: `${buttonBottom}px`,
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.width = "140px";
@@ -61,7 +72,13 @@ export default function Dashboard({ open, onToggle, params, onChange, onHover }:
       </button>
 
       {open && (
-        <div className="fixed bottom-24 right-6 flex flex-col items-end gap-5 z-40">
+        <div
+          className="fixed flex flex-col items-end gap-5 z-40"
+          style={{
+            right: `${buttonRight}px`,
+            bottom: `${buttonBottom + 80}px`,
+          }}
+        >
           <div className="flex flex-row-reverse items-center gap-3">
             <button
               type="button"

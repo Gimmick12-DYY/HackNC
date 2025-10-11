@@ -7,29 +7,54 @@ import CompareSection from "@/components/CompareSection";
 import { DashboardParams, InfoData } from "@/components/types";
 import { AttentionProvider } from "@/components/Attention";
 import { ThemeProvider, useTheme, Themes } from "@/components/Themes";
+import InfoRoundedIcon from "@mui/icons-material/InfoRounded";
 
 function HomeContent() {
   const { theme } = useTheme();
   const [open, setOpen] = React.useState(false);
-  const [dashboardHovered, setDashboardHovered] = React.useState(false);
   const [params, setParams] = React.useState<DashboardParams>({
     nodeCount: 4,
     phraseLength: 5,
     temperature: 0.7,
   });
   const [info, setInfo] = React.useState<InfoData | null>(null);
+  const [infoOpen, setInfoOpen] = React.useState(false);
+  const [infoWidth, setInfoWidth] = React.useState(320);
 
   const generateButtonRef = React.useRef<HTMLButtonElement>(null);
+  const infoButtonRef = React.useRef<HTMLButtonElement>(null);
+  const prevInfoRef = React.useRef<InfoData | null>(null);
 
   React.useEffect(() => {
     if (generateButtonRef.current) {
       generateButtonRef.current.style.width = "56px";
       generateButtonRef.current.style.paddingRight = "16px";
     }
-  }, [dashboardHovered]);
+  }, []);
+
+  React.useEffect(() => {
+    if (infoButtonRef.current) {
+      infoButtonRef.current.style.width = "56px";
+      infoButtonRef.current.style.paddingRight = "16px";
+    }
+  }, [infoOpen]);
+
+  React.useEffect(() => {
+    if (!infoOpen && info && !prevInfoRef.current) {
+      setInfoOpen(true);
+    }
+    prevInfoRef.current = info;
+  }, [info, infoOpen]);
 
   const header = theme.ui.header;
   const generateButton = theme.ui.generateButton;
+  const floatingButton = theme.ui.floatingButton;
+  const stackRight = infoOpen ? infoWidth + 32 : 24;
+  const baseBottom = 24;
+  const buttonSpacing = 72;
+  const dashboardBottom = baseBottom;
+  const infoBottom = baseBottom + buttonSpacing;
+  const generateBottom = baseBottom + buttonSpacing * 2;
 
   return (
     <div
@@ -67,7 +92,14 @@ function HomeContent() {
             <Canvas params={params} onRequestInfo={setInfo} />
           </AttentionProvider>
         </main>
-        <CompareSection info={info} />
+        {infoOpen && (
+          <CompareSection
+            info={info}
+            width={infoWidth}
+            onResize={setInfoWidth}
+            onClose={() => setInfoOpen(false)}
+          />
+        )}
       </div>
 
       <Dashboard
@@ -75,7 +107,8 @@ function HomeContent() {
         onToggle={() => setOpen((v) => !v)}
         params={params}
         onChange={setParams}
-        onHover={setDashboardHovered}
+        buttonRight={stackRight}
+        buttonBottom={dashboardBottom}
       />
 
       <button
@@ -87,7 +120,8 @@ function HomeContent() {
           width: "56px",
           height: "56px",
           padding: "16px",
-          right: dashboardHovered ? "180px" : "90px",
+          right: `${stackRight}px`,
+          bottom: `${generateBottom}px`,
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.width = "140px";
@@ -121,6 +155,44 @@ function HomeContent() {
           className="absolute -top-1 -right-1 w-3 h-3 rounded-full animate-ping"
           style={{ backgroundColor: generateButton.indicator }}
         ></div>
+      </button>
+      <button
+        ref={infoButtonRef}
+        onClick={() => setInfoOpen((v) => !v)}
+        className="fixed z-50 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 group overflow-hidden"
+        style={{
+          background: infoOpen ? floatingButton.hover : floatingButton.background,
+          color: floatingButton.text,
+          width: "56px",
+          height: "56px",
+          padding: "16px",
+          right: `${stackRight}px`,
+          bottom: `${infoBottom}px`,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.width = "140px";
+          e.currentTarget.style.paddingRight = "20px";
+          e.currentTarget.style.background = floatingButton.hover;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.width = "56px";
+          e.currentTarget.style.paddingRight = "16px";
+          e.currentTarget.style.background = infoOpen
+            ? floatingButton.hover
+            : floatingButton.background;
+        }}
+        aria-label={infoOpen ? "Hide Info Panel" : "Show Info Panel"}
+      >
+        <InfoRoundedIcon className="text-xl flex-shrink-0" />
+        <span className="text-sm font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          {infoOpen ? "Close" : "Info"}
+        </span>
+        {!infoOpen && (
+          <div
+            className="absolute -top-1 -right-1 w-3 h-3 rounded-full animate-ping"
+            style={{ backgroundColor: floatingButton.indicator }}
+          ></div>
+        )}
       </button>
     </div>
   );

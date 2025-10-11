@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import NodeCard from "./Node";
 import { DashboardParams, NodeItem, InfoData, NodeID, NodeGraph, NodeData } from "./types";
 import { getVisualDiameter, VISUAL_NODE_MINIMIZED_SIZE } from "@/utils/getVisualDiameter";
@@ -102,6 +102,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const [expandSliderVisible, setExpandSliderVisible] = useState(false);
   const [topBanner, setTopBanner] = useState<{ open: boolean; text: string }>({ open: false, text: "" });
   const [snack, setSnack] = useState<{ open: boolean; text: string; severity: 'info' | 'warning' | 'error' | 'success' }>({ open: false, text: '', severity: 'info' });
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
 
   const showBanner = useCallback((text: string) => setTopBanner({ open: true, text }), []);
   const hideBanner = useCallback(() => setTopBanner({ open: false, text: '' }), []);
@@ -110,6 +111,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   }, []);
 
   const { theme } = useTheme();
+  const floatingButton = theme.ui.floatingButton;
 
   const { distances, focusedNodeId, setFocusedNode, recomputeDistances } = useAttention();
   
@@ -138,6 +140,17 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const rootHoldWorldRef = useRef<{ x: number; y: number } | null>(null);
   const nodeHoldTimerRef = useRef<number | null>(null);
   const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
+  const instructionsButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (instructionsButtonRef.current) {
+      instructionsButtonRef.current.style.width = "56px";
+      instructionsButtonRef.current.style.paddingRight = "16px";
+      instructionsButtonRef.current.style.background = instructionsOpen
+        ? floatingButton.hover
+        : floatingButton.background;
+    }
+  }, [instructionsOpen, floatingButton]);
   const expandMenuRef = useRef<HTMLDivElement | null>(null);
   const expandSliderRef = useRef<HTMLDivElement | null>(null);
   const expandMenuPointerRef = useRef<{ active: boolean; sliderVisible: boolean; startX: number; source: "menu" | "slider" | null }>({ active: false, sliderVisible: false, startX: 0, source: null });
@@ -2513,8 +2526,68 @@ Respond with valid JSON only.`;
         </Alert>
       </Snackbar>
 
-      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 text-slate-500 text-sm bg-white/70 backdrop-blur rounded-full px-3 py-1 shadow select-none" style={{ caretColor: 'transparent' }}>
-        Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select • Right-click for tools
+      <div className="fixed bottom-6 left-6 z-[70] pointer-events-none flex flex-col items-start gap-3">
+        <AnimatePresence>
+          {instructionsOpen && (
+            <motion.div
+              key="canvas-instructions"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="pointer-events-auto text-sm bg-white/80 backdrop-blur rounded-2xl px-4 py-2 shadow border border-white/60 max-w-xl text-left select-none"
+              style={{ color: theme.ui.sidebar.textSecondary, caretColor: "transparent" }}
+            >
+              Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select • Right-click for tools
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <button
+          ref={instructionsButtonRef}
+          type="button"
+          onClick={() => setInstructionsOpen((open) => !open)}
+          className="pointer-events-auto rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 group overflow-hidden"
+          style={{
+            color: floatingButton.text,
+            width: "56px",
+            height: "56px",
+            padding: "16px",
+            background: instructionsOpen
+              ? floatingButton.hover
+              : floatingButton.background,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.width = "140px";
+            e.currentTarget.style.paddingRight = "20px";
+            e.currentTarget.style.background = floatingButton.hover;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.width = "56px";
+            e.currentTarget.style.paddingRight = "16px";
+            e.currentTarget.style.background = instructionsOpen
+              ? floatingButton.hover
+              : floatingButton.background;
+          }}
+          aria-label={instructionsOpen ? "Hide Canvas Instructions" : "Show Canvas Instructions"}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth="1.5"
+            stroke="currentColor"
+            className="w-5 h-5 flex-shrink-0"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"
+            />
+          </svg>
+          <span className="text-sm font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            {instructionsOpen ? "Close" : "Guide"}
+          </span>
+        </button>
       </div>
     </div>
   );

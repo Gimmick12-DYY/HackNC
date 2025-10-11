@@ -7,9 +7,20 @@ import { useTheme, hexToRgba } from "./Themes";
 
 type Props = {
   info: InfoData | null;
+  width: number;
+  onResize: (width: number) => void;
+  onClose: () => void;
 };
 
-export default function CompareSection({ info }: Props) {
+const MIN_WIDTH = 280;
+const MAX_WIDTH = 520;
+
+export default function CompareSection({
+  info,
+  width,
+  onResize,
+  onClose,
+}: Props) {
   const [draft, setDraft] = React.useState("");
   const lastCommittedRef = React.useRef("");
   const { theme } = useTheme();
@@ -59,37 +70,94 @@ export default function CompareSection({ info }: Props) {
     return lines;
   }, [info]);
 
+  const handleResizeStart = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startX = event.clientX;
+      const startWidth = width;
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const delta = startX - moveEvent.clientX;
+        const nextWidth = Math.min(
+          MAX_WIDTH,
+          Math.max(MIN_WIDTH, startWidth + delta)
+        );
+        onResize(nextWidth);
+      };
+
+      const handlePointerEnd = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerEnd);
+        window.removeEventListener("pointercancel", handlePointerEnd);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerEnd);
+      window.addEventListener("pointercancel", handlePointerEnd);
+    },
+    [onResize, width]
+  );
+
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.3 }}
-      className="w-80 shadow-lg h-full flex flex-col border-l"
+      initial={{ opacity: 0, x: 40 }}
+      animate={{ opacity: 1, x: 0, width }}
+      exit={{ opacity: 0, x: 40 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className="shadow-lg h-full flex flex-col border-l relative"
       style={{
+        width,
         background: sidebar.background,
         borderLeftColor: sidebar.border,
       }}
     >
+      <div
+        className="absolute top-0 left-0 h-full w-1.5 cursor-ew-resize"
+        aria-hidden
+        onPointerDown={handleResizeStart}
+        style={{
+          transform: "translateX(-0.75rem)",
+        }}
+      >
+        <div className="absolute inset-y-0 right-0 w-1 rounded-full bg-slate-400/40 hover:bg-slate-500/60 transition-colors" />
+      </div>
       <div className="h-full flex flex-col">
         <div
-          className="p-4 border-b"
+          className="p-4 border-b flex items-start justify-between gap-3"
           style={{
             borderBottomColor: sidebar.border,
             background: sidebar.headerBackground,
           }}
         >
-          <h2
-            className="text-lg font-semibold"
-            style={{ color: sidebar.headerText }}
+          <div>
+            <h2
+              className="text-lg font-semibold"
+              style={{ color: sidebar.headerText }}
+            >
+              Info
+            </h2>
+            <p
+              className="text-sm mt-1"
+              style={{ color: sidebar.headerSubtext }}
+            >
+              Double-click a node to focus it, then edit its details here.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-sm rounded-full border px-3 py-1.5 transition-colors"
+            style={{
+              color: sidebar.headerText,
+              borderColor: sidebar.cardBorder,
+              background: sidebar.cardBackground,
+            }}
+            aria-label="Hide info panel"
           >
-            Info
-          </h2>
-          <p
-            className="text-sm mt-1"
-            style={{ color: sidebar.headerSubtext }}
-          >
-            Double-click a node to focus it, then edit its details here.
-          </p>
+            Hide
+          </button>
         </div>
 
         <div className="flex-1 overflow-auto p-3 space-y-3">
