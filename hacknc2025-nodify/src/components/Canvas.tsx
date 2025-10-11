@@ -7,10 +7,15 @@ import NodeCard from "./Node";
 import { DashboardParams, NodeItem, InfoData, NodeID, NodeGraph, NodeData } from "./types";
 import { getVisualDiameter, VISUAL_NODE_MINIMIZED_SIZE } from "@/utils/getVisualDiameter";
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
+import { DisjointSet } from "@/utils/disjointSet";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import MinimizeRoundedIcon from "@mui/icons-material/MinimizeRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
+import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
+import CloudDownloadRoundedIcon from "@mui/icons-material/CloudDownloadRounded";
+import DeleteSweepRoundedIcon from "@mui/icons-material/DeleteSweepRounded";
 import { Button, Snackbar, Alert } from "@mui/material";
 import { useAttention } from "./Attention";
 import { getNodeColor } from "@/utils/getNodeColor";
@@ -54,6 +59,78 @@ type ExpandOverlayState = {
   count: number; // 选择扩展数量
 };
 
+type PendingConnectionState = {
+  childId: string;
+};
+
+type SerializedGraphNode = {
+  id: string;
+  x: number;
+  y: number;
+  parentId: string | null;
+  children: string[];
+  size?: number;
+  level: number;
+  type: string;
+  full: string;
+  phrase?: string;
+  short?: string;
+  emoji?: string;
+  minimized?: boolean;
+  dotColor?: string;
+  text?: string;
+  groupId?: string;
+};
+
+type SerializedGraphState = {
+  version: number;
+  nodes: SerializedGraphNode[];
+  edges: Array<[string, string]>;
+  groups: Record<string, string>;
+  nextIdCounter: number;
+  camera: { scale: number; offsetX: number; offsetY: number };
+  focusedNodeId?: string | null;
+  timestamp: number;
+};
+
+const GRAPH_STORAGE_KEY = "nodify.graph-state.v1";
+const GRAPH_STORAGE_VERSION = 1;
+
+const areGroupMapsEqual = (
+  a: Record<string, string>,
+  b: Record<string, string>
+) => {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+};
+
+const PHYSICS = {
+  springLength: 200,
+  springK: 1.1,
+  springNonLinearStrength: 1.2,
+  springNonLinearPower: 3,
+  springNonLinearClamp: 0.8,
+  enableRepulsion: true,
+  repulsion: 10000,
+  maxRepelDist: 420,
+  gravityK: 0.0015,
+  damping: 0.93,
+  maxSpeed: 32000000,
+  timeStep: 1 / 120,
+  cellSize: 240,
+  dragSpringBoost: 2,
+  tetherMinFactor: 0.97,
+  tetherMaxFactor: 1.03,
+  tetherIterations: 4,
+  maxStep: 25,
+  cursorMinMotionPx: 5,
+} as const;
+
 const HOLD_DURATION_MS = 500;
 const ROOT_HOLD_MOVE_THRESHOLD = 18;
 const NODE_HOLD_MOVE_THRESHOLD = 24;
@@ -63,6 +140,11 @@ const MAX_GENERATED_COUNT = 12;
 export default function Canvas({ params, onRequestInfo }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
+  const [groupAssignments, setGroupAssignments] = useState<Record<string, string>>({});
+  const [pendingConnection, setPendingConnection] = useState<PendingConnectionState | null>(null);
+  const [graphHydrated, setGraphHydrated] = useState(false);
+  const storageHydratedRef = useRef(false);
+  const saveTimerRef = useRef<number | null>(null);
   // 多选：用 Set 存储所有选中节点
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectedIdsRef = useRef<Set<string>>(new Set());
@@ -186,12 +268,50 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     return { adjacency: normalized };
   }, [nodes]);
 
-  const nextId = () => `n_${idRef.current++}`;
+  const computeGroupAssignmentsFor = useCallback(
+    (map: NodeMap, connectionPairs: Array<[string, string]>) => {
+      const ds = new DisjointSet<string>();
+      Object.keys(map).forEach((id) => ds.add(id));
+      connectionPairs.forEach(([a, b]) => {
+        if (ds.has(a) && ds.has(b)) {
+          ds.union(a, b);
+        }
+      });
+      const assignments: Record<string, string> = {};
+      Object.keys(map).forEach((id) => {
+        assignments[id] = ds.findRepresentative(id) ?? id;
+      });
+      return assignments;
+    },
+    []
+  );
 
-  const commitFocus = useCallback((id: string | null) => {
-    committedFocusIdRef.current = id;
-    setFocusedNode(id);
+  useEffect(() => {
+    const assignments = computeGroupAssignmentsFor(nodes, edges);
+    setGroupAssignments((prev) =>
+      areGroupMapsEqual(prev, assignments) ? prev : assignments
+    );
+  }, [nodes, edges, computeGroupAssignmentsFor]);
+
+  const nextId = () => `n_${idRef.current++}`;
+  const computeNextIdSeed = useCallback((map: NodeMap) => {
+    let max = -1;
+    Object.keys(map).forEach((id) => {
+      const numeric = Number(id.split("_")[1]);
+      if (Number.isFinite(numeric) && numeric > max) {
+        max = numeric;
+      }
+    });
+    return Math.max(max + 1, 0);
   }, []);
+
+  const commitFocus = useCallback(
+    (id: string | null) => {
+      committedFocusIdRef.current = id;
+      setFocusedNode(id);
+    },
+    [setFocusedNode]
+  );
 
   const handleNodeHover = useCallback((id: string) => {
     // Cancel any pending focus-clear timer and focus this node immediately
@@ -275,28 +395,6 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     velocities: Map<string, Velocity>;
     settleUntil: number | null; // run until this timestamp when not dragging
   }>({ running: false, frameId: null, lastTs: 0, velocities: new Map(), settleUntil: null });
-
-  const PHYSICS = {
-    springLength: 200,
-    springK: 1.1,
-    springNonLinearStrength: 1.2,
-    springNonLinearPower: 3,
-    springNonLinearClamp: 0.8,
-    enableRepulsion: true,
-    repulsion: 10000,
-    maxRepelDist: 420,
-    gravityK: 0.0015,
-    damping: 0.93, // slightly less damping to respond faster
-    maxSpeed: 32000000, // allow faster settle
-    timeStep: 1 / 120,
-    cellSize: 240,
-    dragSpringBoost: 2,
-    tetherMinFactor: 0.97,
-    tetherMaxFactor: 1.03,
-    tetherIterations: 4,
-    maxStep: 25,
-    cursorMinMotionPx: 5,
-  } as const;
 
   const ensurePhysicsActive = useCallback(() => {
     const s = physicsStateRef.current;
@@ -411,8 +509,8 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         const speed = Math.hypot(vel.vx, vel.vy);
         if (speed > PHYSICS.maxSpeed) { const scale = PHYSICS.maxSpeed / speed; vel.vx *= scale; vel.vy *= scale; }
         const p = positions.get(id)!;
-        const nx = p.x + vel.vx * PHYSICS.timeStep;
-        const ny = p.y + vel.vy * PHYSICS.timeStep;
+        const nx = p.x + vel.vx * timeStep;
+        const ny = p.y + vel.vy * timeStep;
         nextCenters.set(id, { x: nx, y: ny, size: p.size });
       }
 
@@ -522,6 +620,249 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       ensurePhysicsActive();
     });
   }, [ensurePhysicsActive]);
+
+  const buildGraphSnapshot = useCallback((): SerializedGraphState => {
+    const nodesPayload: SerializedGraphNode[] = Object.values(nodes).map((node) => ({
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      parentId: node.parentId ?? null,
+      children: [...node.children],
+      size: node.size,
+      level: node.level,
+      type: node.type,
+      full: node.full,
+      phrase: node.phrase,
+      short: node.short,
+      emoji: node.emoji,
+      minimized: node.minimized,
+      dotColor: node.dotColor,
+      text: node.text,
+      groupId: groupAssignments[node.id] ?? node.groupId,
+    }));
+    const focusToPersist =
+      committedFocusIdRef.current ?? focusedNodeId ?? null;
+    return {
+      version: GRAPH_STORAGE_VERSION,
+      nodes: nodesPayload,
+      edges,
+      groups: groupAssignments,
+      nextIdCounter: idRef.current,
+      camera: { scale, offsetX, offsetY },
+      focusedNodeId: focusToPersist,
+      timestamp: Date.now(),
+    };
+  }, [nodes, edges, groupAssignments, scale, offsetX, offsetY, focusedNodeId]);
+
+  const loadGraphFromStorage = useCallback(
+    (options?: { focusMode?: "saved" | "first" | "none"; silent?: boolean }) => {
+      if (typeof window === "undefined") return false;
+      const raw = window.localStorage.getItem(GRAPH_STORAGE_KEY);
+      if (!raw) {
+        if (!options?.silent) {
+          showSnack("No saved graph found", "info");
+        }
+        return false;
+      }
+      try {
+        const parsed = JSON.parse(raw) as SerializedGraphState;
+        if (!parsed || parsed.version !== GRAPH_STORAGE_VERSION) {
+          if (!options?.silent) {
+            showSnack("Saved graph is not compatible with this version", "warning");
+          }
+          return false;
+        }
+        const map: NodeMap = {};
+        parsed.nodes.forEach((node) => {
+          map[node.id] = {
+            id: node.id,
+            x: node.x,
+            y: node.y,
+            parentId: node.parentId ?? null,
+            children: Array.from(new Set(node.children ?? [])),
+            level: node.level ?? 0,
+            type: node.type,
+            full: node.full,
+            phrase: node.phrase,
+            short: node.short,
+            emoji: node.emoji,
+            minimized: node.minimized,
+            dotColor: node.dotColor,
+            text: node.text ?? node.full,
+            size: node.size,
+            groupId: node.groupId,
+          };
+        });
+        const parentMap = new Map<string, string>();
+        const childrenMap: Record<string, string[]> = {};
+        parsed.edges.forEach(([parentId, childId]) => {
+          if (!map[parentId] || !map[childId]) return;
+          parentMap.set(childId, parentId);
+          const bucket = childrenMap[parentId] ?? (childrenMap[parentId] = []);
+          if (!bucket.includes(childId)) bucket.push(childId);
+        });
+        Object.keys(map).forEach((id) => {
+          const parentId = parentMap.get(id) ?? map[id].parentId ?? null;
+          const children = childrenMap[id] ?? map[id].children ?? [];
+          map[id] = {
+            ...map[id],
+            parentId,
+            children,
+          };
+        });
+
+        const visited = new Set<string>();
+        const queue: Array<{ id: string; depth: number }> = [];
+        Object.values(map).forEach((node) => {
+          if (!node.parentId || !map[node.parentId]) {
+            queue.push({ id: node.id, depth: 0 });
+          }
+        });
+        while (queue.length > 0) {
+          const { id, depth } = queue.shift()!;
+          if (visited.has(id)) continue;
+          visited.add(id);
+          const current = map[id];
+          if (!current) continue;
+          const calibratedSize = computeSizeByDepth(depth);
+          const updatedNode = {
+            ...current,
+            level: depth,
+            size: calibratedSize,
+          };
+          map[id] = updatedNode;
+          updatedNode.children.forEach((childId) => {
+            if (map[childId]) {
+              queue.push({ id: childId, depth: depth + 1 });
+            }
+          });
+        }
+
+        const sanitizedEdges = parsed.edges.filter(
+          ([parentId, childId]) => Boolean(map[parentId] && map[childId])
+        );
+        setNodes(map);
+        setEdges(sanitizedEdges);
+        const baseAssignments =
+          parsed.groups && Object.keys(parsed.groups).length > 0
+            ? parsed.groups
+            : computeGroupAssignmentsFor(map, sanitizedEdges);
+        const sanitizedAssignments: Record<string, string> = {};
+        Object.keys(map).forEach((id) => {
+          sanitizedAssignments[id] = baseAssignments[id] ?? id;
+        });
+        setGroupAssignments(sanitizedAssignments);
+        idRef.current =
+          parsed.nextIdCounter ?? computeNextIdSeed(map);
+        if (parsed.camera) {
+          setScale(parsed.camera.scale);
+          setOffsetX(parsed.camera.offsetX);
+          setOffsetY(parsed.camera.offsetY);
+        }
+        const focusMode = options?.focusMode ?? "saved";
+        let focusId: string | null =
+          focusMode === "none"
+            ? null
+            : focusMode === "first"
+              ? Object.keys(map)[0] ?? null
+              : parsed.focusedNodeId ?? null;
+        if (focusId && !map[focusId]) {
+          focusId = Object.keys(map)[0] ?? null;
+        }
+        if (focusId) {
+          commitFocus(focusId);
+        } else {
+          commitFocus(null);
+        }
+        setSelectedIds(new Set());
+        setPendingConnection(null);
+        schedulePhysicsSettle();
+        if (!options?.silent) {
+          showSnack("Graph loaded from local storage", "success");
+        }
+        return true;
+      } catch (error) {
+        console.error("Failed to load graph from storage", error);
+        if (!options?.silent) {
+          showSnack("Failed to load saved graph", "error");
+        }
+        return false;
+      }
+    },
+    [
+      commitFocus,
+      computeGroupAssignmentsFor,
+      computeNextIdSeed,
+      computeSizeByDepth,
+      schedulePhysicsSettle,
+      showSnack,
+    ]
+  );
+
+  useEffect(() => {
+    if (graphHydrated || storageHydratedRef.current) return;
+    if (typeof window === "undefined") return;
+    storageHydratedRef.current = true;
+    const loaded = loadGraphFromStorage({ focusMode: "saved", silent: true });
+    if (!loaded) {
+      idRef.current = computeNextIdSeed(nodesRef.current);
+    }
+    setGraphHydrated(true);
+  }, [graphHydrated, loadGraphFromStorage, computeNextIdSeed]);
+
+  useEffect(() => {
+    if (!graphHydrated) return;
+    if (typeof window === "undefined") return;
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+    saveTimerRef.current = window.setTimeout(() => {
+      try {
+        const snapshot = buildGraphSnapshot();
+        window.localStorage.setItem(
+          GRAPH_STORAGE_KEY,
+          JSON.stringify(snapshot)
+        );
+      } catch (error) {
+        console.error("Failed to persist graph snapshot", error);
+      } finally {
+        saveTimerRef.current = null;
+      }
+    }, 600);
+    return () => {
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [buildGraphSnapshot, graphHydrated]);
+
+  const handleManualSave = useCallback(() => {
+    if (!graphHydrated) {
+      showSnack("Graph is not ready to save yet", "warning");
+      return;
+    }
+    if (typeof window === "undefined") return;
+    try {
+      const snapshot = buildGraphSnapshot();
+      window.localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(snapshot));
+      showSnack("Graph saved locally", "success");
+    } catch (error) {
+      console.error("Failed to save graph snapshot", error);
+      showSnack("Failed to save graph", "error");
+    }
+  }, [buildGraphSnapshot, graphHydrated, showSnack]);
+
+  const handleLoadSavedGraph = useCallback(() => {
+    loadGraphFromStorage({ focusMode: "saved" });
+  }, [loadGraphFromStorage]);
+
+  const handleClearSavedGraph = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(GRAPH_STORAGE_KEY);
+    showSnack("Saved graph data cleared", "success");
+  }, [showSnack]);
+
 
   // 屏幕坐标转换为canvas坐标
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
@@ -852,6 +1193,10 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     
     // Hide context menu if visible
     setContextMenu(null);
+    if (pendingConnection) {
+      setPendingConnection(null);
+      showSnack("Connection cancelled", "info");
+    }
     
     // Clear selection on canvas click
     setSelectedIds(new Set());
@@ -1015,12 +1360,101 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     return { rootId, nodes: nodesInfo, edges: edgesInfo };
   }, [nodes]);
 
+  const connectNodes = useCallback(
+    (childId: string, parentId: string) => {
+      if (childId === parentId) {
+        showSnack("Cannot connect a node to itself", "warning");
+        return false;
+      }
+      const currentNodes = nodesRef.current;
+      const child = currentNodes[childId];
+      const parent = currentNodes[parentId];
+      if (!child || !parent) {
+        showSnack("Selected nodes are no longer available", "error");
+        return false;
+      }
+      const stack = [childId];
+      const visited = new Set<string>();
+      while (stack.length > 0) {
+        const currentId = stack.pop()!;
+        if (currentId === parentId) {
+          showSnack("Connecting these nodes would create a cycle", "error");
+          return false;
+        }
+        if (visited.has(currentId)) continue;
+        visited.add(currentId);
+        const node = currentNodes[currentId];
+        if (!node) continue;
+        node.children.forEach((cid) => stack.push(cid));
+      }
+      setNodes((prev) => {
+        const next = { ...prev };
+        const childNode = next[childId];
+        const parentNode = next[parentId];
+        if (!childNode || !parentNode) return prev;
+        if (childNode.parentId === parentId) return prev;
+        if (childNode.parentId && next[childNode.parentId]) {
+          const origin = next[childNode.parentId];
+          const filteredChildren = origin.children.filter((cid) => cid !== childId);
+          if (filteredChildren.length !== origin.children.length) {
+            next[childNode.parentId] = { ...origin, children: filteredChildren };
+          }
+        }
+        const parentChildren = parentNode.children.includes(childId)
+          ? parentNode.children
+          : [...parentNode.children, childId];
+        next[parentId] = { ...parentNode, children: parentChildren };
+        next[childId] = {
+          ...childNode,
+          parentId,
+        };
+        const updateLevels = (map: NodeMap, nodeId: string, depth: number) => {
+          const target = map[nodeId];
+          if (!target) return;
+          const recalibrated = {
+            ...target,
+            level: depth,
+            size: computeSizeByDepth(depth),
+          };
+          map[nodeId] = recalibrated;
+          recalibrated.children.forEach((cid) => updateLevels(map, cid, depth + 1));
+        };
+        const parentLevel = next[parentId]?.level ?? 0;
+        updateLevels(next, childId, parentLevel + 1);
+        return next;
+      });
+      setEdges((prev) => {
+        const withoutOld = prev.filter(
+          ([p, c]) => !(c === childId && p !== parentId)
+        );
+        const exists = withoutOld.some(
+          ([p, c]) => p === parentId && c === childId
+        );
+        return exists ? withoutOld : [...withoutOld, [parentId, childId]];
+      });
+      schedulePhysicsSettle();
+      showSnack("Nodes connected successfully", "success");
+      return true;
+    },
+    [computeSizeByDepth, schedulePhysicsSettle, showSnack]
+  );
+
   // 点击节点：单选并打开信息
   const handleNodeClick = useCallback((id: string) => {
+    if (pendingConnection) {
+      const success = connectNodes(pendingConnection.childId, id);
+      if (success) {
+        const s = new Set<string>([pendingConnection.childId, id]);
+        setSelectedIds(s);
+        commitFocus(id);
+        setPendingConnection(null);
+      }
+      return;
+    }
     const s = new Set<string>([id]);
     setSelectedIds(s);
     commitFocus(id);
-  }, [commitFocus]);
+  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
@@ -1100,6 +1534,10 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         requestAnimationFrame(() => {
           openExpandOverlay(nodeId);
         });
+        break;
+      case 'connect':
+        setPendingConnection({ childId: nodeId });
+        showSnack('Select another node to complete the connection', 'info');
         break;
       case 'minimize':
         onMinimize?.(nodeId);
@@ -1393,6 +1831,9 @@ export default function Canvas({ params, onRequestInfo }: Props) {
         pointerClient: null,
       };
     });
+    setPendingConnection((current) =>
+      current && current.childId === id ? null : current
+    );
   }, [commitFocus]);
 
   const onMinimize = useCallback((id: string) => {
@@ -1747,6 +2188,10 @@ Respond with valid JSON only.`;
         e.preventDefault();
         onResetCamera();
       }
+      if (e.key === 'Escape' && pendingConnection) {
+        setPendingConnection(null);
+        showSnack("Connection cancelled", "info");
+      }
     };
 
     if (contextMenu) {
@@ -1762,7 +2207,7 @@ Respond with valid JSON only.`;
       document.removeEventListener('keydown', handleEscape);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [contextMenu, onResetCamera]);
+  }, [contextMenu, onResetCamera, pendingConnection, setPendingConnection, showSnack]);
 
   useEffect(() => cancelNodeHold, [cancelNodeHold]);
 
@@ -2270,27 +2715,32 @@ Respond with valid JSON only.`;
           </motion.div>
         ))}
 
-        {Object.values(nodes).map((n) => (
-          <NodeCard
-            key={n.id}
-            node={n}
-            onMove={onMove}
-            onMoveEnd={onMoveEnd}
-            onMinimize={onMinimize}
-            onContextMenu={onNodeContextMenu}
-            highlight={selectedIds.has(n.id)}
-            screenToCanvas={screenToCanvas}
-            onHoldStart={handleNodeHoldStart}
-            onHoldMove={handleNodeHoldMove}
-            onHoldEnd={handleNodeHoldEnd}
-            onDoubleClickNode={handleNodeDoubleClick}
-            onHoverNode={handleNodeHover}
-            onHoverLeave={handleNodeHoverLeave}
-            onClickNode={handleNodeClick}
-            distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
-            isGlobalDragging={isDragging}
-          />
-        ))}
+        {Object.values(nodes).map((n) => {
+          const assignment = groupAssignments[n.id];
+          const nodeForRender =
+            assignment && n.groupId !== assignment ? { ...n, groupId: assignment } : n;
+          return (
+            <NodeCard
+              key={n.id}
+              node={nodeForRender}
+              onMove={onMove}
+              onMoveEnd={onMoveEnd}
+              onMinimize={onMinimize}
+              onContextMenu={onNodeContextMenu}
+              highlight={selectedIds.has(n.id)}
+              screenToCanvas={screenToCanvas}
+              onHoldStart={handleNodeHoldStart}
+              onHoldMove={handleNodeHoldMove}
+              onHoldEnd={handleNodeHoldEnd}
+              onDoubleClickNode={handleNodeDoubleClick}
+              onHoverNode={handleNodeHover}
+              onHoverLeave={handleNodeHoverLeave}
+              onClickNode={handleNodeClick}
+              distance={distances[n.id] ?? Number.POSITIVE_INFINITY}
+              isGlobalDragging={isDragging}
+            />
+          );
+        })}
       </div>
 
       { (previewState.parentId) && (
@@ -2325,6 +2775,27 @@ Respond with valid JSON only.`;
                 <span className="text-green-500">🎯</span>
                 Reset Camera View
               </button>
+              <button
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                onClick={handleManualSave}
+              >
+                <SaveRoundedIcon fontSize="small" className="text-emerald-500" />
+                Save Graph Locally
+              </button>
+              <button
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                onClick={handleLoadSavedGraph}
+              >
+                <CloudDownloadRoundedIcon fontSize="small" className="text-indigo-500" />
+                Load Saved Graph
+              </button>
+              <button
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                onClick={handleClearSavedGraph}
+              >
+                <DeleteSweepRoundedIcon fontSize="small" className="text-rose-500" />
+                Clear Saved Graph
+              </button>
             </>
           ) : contextMenu.type === 'node' && contextMenu.nodeId ? (
             <>
@@ -2342,6 +2813,15 @@ Respond with valid JSON only.`;
                 <InfoOutlinedIcon fontSize="small" className="text-sky-600" />
                 Get info
               </button>
+              {Object.keys(nodes).length > 1 && (
+                <button
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                  onClick={() => handleNodeMenuAction('connect', contextMenu.nodeId!)}
+                >
+                  <LinkRoundedIcon fontSize="small" className="text-indigo-500" />
+                  Connect to Node
+                </button>
+              )}
               <button
                 className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
                 onClick={() => handleNodeMenuAction('minimize', contextMenu.nodeId!)}

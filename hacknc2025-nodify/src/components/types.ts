@@ -17,6 +17,7 @@ export interface NodeItem extends NodeData {
   y: number;
   parentId?: NodeID | null;
   children: NodeID[];
+  groupId?: string;
   expanded?: boolean;
   size?: number;
   minimized?: boolean;
