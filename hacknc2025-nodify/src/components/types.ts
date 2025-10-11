@@ -49,8 +49,47 @@ export type NodeInfoSummary = {
 };
 
 export type InfoData = {
-  rootId: NodeID;
+  mode: "node" | "debate";
+  rootId: NodeID | null;
   nodes: Record<NodeID, NodeInfoSummary>;
   edges: Array<[NodeID, NodeID]>; // [parent, child]
   updateText?: (value: string) => void;
+  debate?: DebateRecord;
+};
+
+export type DebateRequestNode = {
+  id: NodeID;
+  type: string;
+  full: string;
+  phrase?: string;
+  short?: string;
+};
+
+export type DebateArgument = {
+  title: string;
+  statement: string;
+  evidence: string;
+  support: string;
+  weight: "strong" | "medium" | "weak";
+};
+
+export type DebateSide = {
+  label: string;
+  stance: string;
+  summary: string;
+  arguments: DebateArgument[];
+  rebuttals: string[];
+};
+
+export type DebateRecord = {
+  id: string;
+  createdAt: number;
+  topic: string;
+  summary: string;
+  keyInsights: string[];
+  verdict: string;
+  recommendations: string[];
+  sources: string[];
+  promptNodes: DebateRequestNode[];
+  sides: DebateSide[];
 };

@@ -4,7 +4,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import NodeCard from "./Node";
-import { DashboardParams, NodeItem, InfoData, NodeID, NodeGraph, NodeData } from "./types";
+import {
+  DashboardParams,
+  NodeItem,
+  InfoData,
+  NodeID,
+  NodeGraph,
+  NodeData,
+  DebateRecord,
+  DebateRequestNode,
+  NodeInfoSummary,
+} from "./types";
 import { getVisualDiameter, VISUAL_NODE_MINIMIZED_SIZE } from "@/utils/getVisualDiameter";
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import { DisjointSet } from "@/utils/disjointSet";
@@ -92,6 +102,7 @@ type SerializedGraphState = {
   camera: { scale: number; offsetX: number; offsetY: number };
   focusedNodeId?: string | null;
   timestamp: number;
+  debates?: DebateRecord[];
 };
 
 const GRAPH_STORAGE_KEY = "nodify.graph-state.v1";
@@ -149,6 +160,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [groupAssignments, setGroupAssignments] = useState<Record<string, string>>({});
+  const [debateHistory, setDebateHistory] = useState<Record<string, DebateRecord>>({});
   const [pendingConnection, setPendingConnection] = useState<PendingConnectionState | null>(null);
   const [graphHydrated, setGraphHydrated] = useState(false);
   const storageHydratedRef = useRef(false);
@@ -156,10 +168,14 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const [multiSelectMenu, setMultiSelectMenu] = useState<MultiSelectMenuState | null>(null);
   const multiSelectMenuRef = useRef<HTMLDivElement | null>(null);
   const shiftPressedRef = useRef(false);
+  const debateAbortRef = useRef<AbortController | null>(null);
   // 多选：用 Set 存储所有选中节点
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectedIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
+  useEffect(() => () => {
+    debateAbortRef.current?.abort();
+  }, []);
   const committedFocusIdRef = useRef<string | null>(null);
   const hoveredNodeIdRef = useRef<string | null>(null);
   const hoverClearTimerRef = useRef<number | null>(null);
@@ -662,8 +678,9 @@ export default function Canvas({ params, onRequestInfo }: Props) {
       camera: { scale, offsetX, offsetY },
       focusedNodeId: focusToPersist,
       timestamp: Date.now(),
+      debates: Object.values(debateHistory),
     };
-  }, [nodes, edges, groupAssignments, scale, offsetX, offsetY, focusedNodeId]);
+  }, [nodes, edges, groupAssignments, scale, offsetX, offsetY, focusedNodeId, debateHistory]);
 
   const loadGraphFromStorage = useCallback(
     (options?: { focusMode?: "saved" | "first" | "none"; silent?: boolean }) => {
@@ -721,6 +738,16 @@ export default function Canvas({ params, onRequestInfo }: Props) {
             children,
           };
         });
+
+        const debatesFromStorage: Record<string, DebateRecord> = {};
+        if (Array.isArray(parsed.debates)) {
+          parsed.debates.forEach((entry) => {
+            if (entry && typeof entry === "object" && typeof entry.id === "string") {
+              debatesFromStorage[entry.id] = entry as DebateRecord;
+            }
+          });
+        }
+        setDebateHistory(debatesFromStorage);
 
         const visited = new Set<string>();
         const queue: Array<{ id: string; depth: number }> = [];
@@ -871,6 +898,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
   const handleClearSavedGraph = useCallback(() => {
     if (typeof window === "undefined") return;
     window.localStorage.removeItem(GRAPH_STORAGE_KEY);
+    setDebateHistory({});
     showSnack("Saved graph data cleared", "success");
   }, [showSnack]);
 
@@ -1497,7 +1525,7 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     };
 
     dfs(rootId);
-    return { rootId, nodes: nodesInfo, edges: edgesInfo };
+    return { mode: "node", rootId, nodes: nodesInfo, edges: edgesInfo };
   }, [nodes]);
 
   const connectNodes = useCallback(
@@ -1613,16 +1641,94 @@ export default function Canvas({ params, onRequestInfo }: Props) {
     commitFocus(parentId);
   }, [commitFocus, connectNodes, showSnack]);
 
-  const handleDebateSelectedNodes = useCallback(() => {
+  const handleDebateSelectedNodes = useCallback(async () => {
     const ids = Array.from(selectedIdsRef.current);
     if (ids.length < 2) {
       showSnack("Select at least two nodes to debate", "warning");
       return;
     }
-    debateNodes(ids);
-    showSnack("Debating! feature coming soon", "info");
+    const uniqueIds = Array.from(new Set(ids));
+    const nodeInputs: DebateRequestNode[] = [];
+    const missing: string[] = [];
+    uniqueIds.forEach((id) => {
+      const node = nodesRef.current[id];
+      if (!node) {
+        missing.push(id);
+        return;
+      }
+      const full =
+        (node.full ?? node.text ?? node.phrase ?? node.short ?? "").trim();
+      if (!full) {
+        missing.push(id);
+        return;
+      }
+      nodeInputs.push({
+        id: node.id,
+        type: node.type ?? "idea",
+        full,
+        phrase: node.phrase?.trim() || undefined,
+        short: node.short?.trim() || undefined,
+      });
+    });
+    if (missing.length) {
+      showSnack(
+        `Unable to debate ${missing.length} selected node${
+          missing.length > 1 ? "s" : ""
+        } with empty content`,
+        "warning"
+      );
+      return;
+    }
+    if (nodeInputs.length < 2) {
+      showSnack("Need at least two populated nodes to debate", "warning");
+      return;
+    }
     setMultiSelectMenu(null);
-  }, [showSnack]);
+    debateAbortRef.current?.abort();
+    const controller = new AbortController();
+    debateAbortRef.current = controller;
+    showSnack("Generating debate summary...", "info");
+    try {
+      const debate = await debateNodes(nodeInputs, {
+        signal: controller.signal,
+      });
+      setDebateHistory((prev) => ({
+        ...prev,
+        [debate.id]: debate,
+      }));
+      if (onRequestInfo) {
+        const infoNodes: Record<string, NodeInfoSummary> = {};
+        nodeInputs.forEach((item) => {
+          const source = nodesRef.current[item.id];
+          if (!source) return;
+          infoNodes[item.id] = {
+            id: source.id,
+            text: source.full || source.text || "",
+            parentId: source.parentId ?? null,
+            children: [...source.children],
+          };
+        });
+        onRequestInfo({
+          mode: "debate",
+          rootId: uniqueIds[0] ?? null,
+          nodes: infoNodes,
+          edges: [],
+          debate,
+        });
+      }
+      showSnack("Debate ready in the comparison panel", "success");
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") {
+        showSnack("Debate request cancelled", "info");
+      } else {
+        const message =
+          error instanceof Error ? error.message : "Failed to run debate";
+        showSnack(message, "error");
+      }
+    } finally {
+      debateAbortRef.current = null;
+    }
+  }, [showSnack, onRequestInfo]);
 
   // 点击节点：单选并打开信息
   const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
@@ -1763,12 +1869,14 @@ export default function Canvas({ params, onRequestInfo }: Props) {
 
   useEffect(() => {
     if (!onRequestInfo) return;
-    if (selectedIds.size !== 1) {
-      onRequestInfo(null);
+    if (selectedIds.size === 1) {
+      const [id] = Array.from(selectedIds);
+      emitInfoFor(id);
       return;
     }
-    const [id] = Array.from(selectedIds);
-    emitInfoFor(id);
+    if (selectedIds.size === 0) {
+      onRequestInfo(null);
+    }
   }, [selectedIds, emitInfoFor, onRequestInfo]);
 
   const onNodeContextMenu = useCallback((e: React.MouseEvent, nodeId: string) => {
@@ -2982,8 +3090,7 @@ Respond with valid JSON only.`;
               className="w-full px-3 py-2 rounded-md text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
               onClick={handleDebateSelectedNodes}
             >
-              <span>Debating!</span>
-              <span className="text-xs text-rose-500">Coming soon</span>
+              <span>Run Debate</span>
             </button>
           </div>
         </div>,
