@@ -41,6 +41,7 @@ const DRAG_LIST_KEYS: readonly DragListKey[] = [
 type DropIndicator =
   | { kind: "list"; list: DragListKey; index: number }
   | { kind: "main"; section: "argument" | "counter" }
+  | { kind: "trash" }
   | null;
 
 type ActiveDragState = {
@@ -134,6 +135,7 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
     "counter-evidences": null,
     "script-outline": null,
   });
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
   const mainRefs = React.useRef<{ argument: HTMLDivElement | null; counter: HTMLDivElement | null }>({
     argument: null,
     counter: null,
@@ -278,6 +280,16 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
       }
     }
 
+    // If pointer is outside of the collector panel entirely, show trash overlay
+    const panel = panelRef.current;
+    if (panel) {
+      const rect = panel.getBoundingClientRect();
+      const inside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+      if (!inside) {
+        applyDropIndicator({ kind: "trash" });
+        return;
+      }
+    }
     applyDropIndicator(null);
   }, []);
 
@@ -346,6 +358,13 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
           }
         }
       });
+    }
+    if (dropTarget.kind === "trash") {
+      mutateState((draft) => {
+        detachNode(draft, dragData.node.id);
+        // do not add to pool; it's a delete
+      });
+      return;
     }
   }, [cleanupPointerListeners, detachNode, getList, mutateState, restoreTextSelection, setActiveDragState]);
 
@@ -435,6 +454,7 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
   return (
     <>
       <motion.div
+        ref={panelRef}
         initial={{ opacity: 0, x: 40 }}
         animate={{ opacity: 1, x: 0, width }}
         exit={{ opacity: 0, x: 40 }}
@@ -449,6 +469,21 @@ export default function CollectorPanel({ width, onResize, onClose, state, onChan
           overflow: "hidden",
         }}
       >
+      {dropIndicator?.kind === 'trash' && createPortal(
+        <div className="fixed inset-0 z-[90]" style={{ background: "rgba(0,0,0,0.35)" }}>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="rounded-full w-24 h-24 flex items-center justify-center shadow-xl" style={{ background: hexToRgba(accent, 0.2), border: `2px solid ${accent}` }}>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              </svg>
+            </div>
+          </div>
+        </div>, document.body
+      )}
       <div
         className="absolute top-0 left-0 h-full w-1.5 cursor-ew-resize"
         aria-hidden
