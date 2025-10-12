@@ -227,6 +227,14 @@ function HomeContent() {
           Nodify
         </div>
         <div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-center"
+          style={{ color: header.text, pointerEvents: 'none' }}
+        >
+          <span className="inline-block text-[13px] sm:text-base font-medium tracking-wide" style={{ opacity: 0.9, fontFamily: 'var(--font-playfair)' }}>
+            Everything has a link
+          </span>
+        </div>
+        <div
           className="relative text-sm flex items-center gap-3 text-right"
           style={{ color: header.subtext }}
         >
