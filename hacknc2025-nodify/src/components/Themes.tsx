@@ -110,7 +110,7 @@ export type ThemeDefinition = {
   };
 };
 
-export type ThemeId = "sunrise" | "obsidian" | "morandi";
+export type ThemeId = "sunrise" | "obsidian" | "morandi" | "ocean-surfing";
 
 const SUNRISE_THEME: ThemeDefinition = {
   id: "sunrise",
@@ -413,10 +413,112 @@ const MORANDI_THEME: ThemeDefinition = {
   },
 };
 
+const OCEAN_SURFING_THEME: ThemeDefinition = {
+  id: "ocean-surfing",
+  name: "Ocean Surfing",
+  icon: "🌊",
+  description: "A refreshing ocean theme with deep blue tones and flowing waves.",
+  previewColors: ["#3b82f6", "#0ea5e9", "#06b6d4"],
+  canvas: {
+    background:
+      "linear-gradient(180deg, #0c4a6e 0%, #075985 35%, #0284c7 70%, #0ea5e9 100%)",
+    grid: {
+      enabled: false,
+      lineColor: "#0369a1",
+      dotColor: "#075985",
+      lineOpacity: { min: 0.15, max: 0.35, scale: 0.25 },
+      dotOpacity: { min: 0.1, max: 0.3, scale: 0.2 },
+    },
+    origin: {
+      fill: "rgba(34, 211, 238, 0.95)",
+      stroke: "#22d3ee",
+      core: "#06b6d4",
+    },
+  },
+  node: {
+    palette: {
+      idea: "#22d3ee",
+      argument: "#a78bfa",
+      counter: "#fb923c",
+      reference: "#fbbf24",
+      analogy: "#f472b6",
+      default: "#60a5fa",
+    },
+    backgroundAlpha: 0.22,
+    borderAlpha: 0.55,
+    textColor: { regular: "#ffffff", minimized: "#0c4a6e" },
+    label: {
+      textColor: "#ffffff",
+      background: "rgba(8, 47, 73, 0.9)",
+      opacity: 0.92,
+      blur: 12,
+      letterSpacing: 0.15,
+    },
+    shadow: {
+      default: "0 10px 28px rgba(34, 211, 238, 0.35)",
+      highlight: "0 0 40px rgba(34, 211, 238, 0.8)",
+    },
+    highlightStroke: "#22d3ee",
+    minimizedPalette: [
+      "#22d3ee",
+      "#a78bfa",
+      "#fb923c",
+      "#fbbf24",
+      "#f472b6",
+      "#60a5fa",
+    ],
+    opacityLevels: { 0: 1, 1: 0.9, 2: 0.75, 3: 0.55, default: 0.4 },
+  },
+  lines: {
+    default: { stroke: "rgba(34, 211, 238, 0.45)" },
+    connected: { stroke: "rgba(34, 211, 238, 0.9)" },
+    dimmed: { stroke: "rgba(96, 165, 250, 0.25)" },
+    preview: { stroke: "rgba(34, 211, 238, 0.65)", opacity: 0.75 },
+  },
+  ui: {
+    header: {
+      background: "rgba(12, 74, 110, 0.85)",
+      border: "rgba(7, 89, 133, 0.7)",
+      text: "#f0f9ff",
+      subtext: "#bae6fd",
+    },
+    sidebar: {
+      background: "rgba(8, 47, 73, 0.88)",
+      border: "rgba(7, 89, 133, 0.75)",
+      headerBackground:
+        "linear-gradient(135deg, rgba(12, 74, 110, 0.95) 0%, rgba(7, 89, 133, 0.95) 100%)",
+      headerText: "#f0f9ff",
+      headerSubtext: "#bae6fd",
+      cardBackground: "rgba(12, 74, 110, 0.85)",
+      cardBorder: "rgba(3, 105, 161, 0.85)",
+      textPrimary: "#e0f2fe",
+      textSecondary: "#bae6fd",
+      textMuted: "#7dd3fc",
+      inputBackground: "rgba(8, 47, 73, 0.9)",
+      inputBorder: "rgba(59, 130, 246, 0.5)",
+      inputFocus: "#3b82f6",
+      inputText: "#f0f9ff",
+    },
+    floatingButton: {
+      background: "#075985",
+      hover: "#0c4a6e",
+      text: "#f0f9ff",
+      indicator: "#06b6d4",
+    },
+    generateButton: {
+      background: "#0ea5e9",
+      hover: "#0284c7",
+      text: "#f0f9ff",
+      indicator: "#38bdf8",
+    },
+  },
+};
+
 const THEME_REGISTRY: Record<ThemeId, ThemeDefinition> = {
   obsidian: OBSIDIAN_DARK_THEME,
   morandi: MORANDI_THEME,
-  sunrise: SUNRISE_THEME
+  sunrise: SUNRISE_THEME,
+  "ocean-surfing": OCEAN_SURFING_THEME
 };
 
 const THEME_LIST = Object.values(THEME_REGISTRY);

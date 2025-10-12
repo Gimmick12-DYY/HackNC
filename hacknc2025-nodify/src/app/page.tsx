@@ -438,8 +438,8 @@ function HomeContent() {
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
-        <main className="flex-1 overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative">
+        <main className="absolute inset-0 overflow-hidden">
           <div className="absolute inset-0" style={{ zIndex: 0 }}>
             <BackgroundFX />
           </div>
@@ -453,25 +453,29 @@ function HomeContent() {
           </AttentionProvider>
         </main>
         {infoOpen && !collectorOpen && (
-          <CompareSection
-            info={info}
-            width={infoWidth}
-            onResize={setInfoWidth}
-            onClose={() => setInfoOpen(false)}
-          />
+          <div className="absolute top-0 right-0 bottom-0 z-10">
+            <CompareSection
+              info={info}
+              width={infoWidth}
+              onResize={setInfoWidth}
+              onClose={() => setInfoOpen(false)}
+            />
+          </div>
         )}
         {collectorOpen && (
-          <CollectorPanel
-            width={collectorWidth}
-            onResize={setCollectorWidth}
-            onClose={() => setCollectorOpen(false)}
-            state={collector}
-            onChangeState={setCollector}
-            outputs={thoughtHistory}
-            activeOutputId={activeThoughtId}
-            onRecordOutput={handleRecordThought}
-            onSelectOutput={handleSelectOutput}
-          />
+          <div className="absolute top-0 right-0 bottom-0 z-10">
+            <CollectorPanel
+              width={collectorWidth}
+              onResize={setCollectorWidth}
+              onClose={() => setCollectorOpen(false)}
+              state={collector}
+              onChangeState={setCollector}
+              outputs={thoughtHistory}
+              activeOutputId={activeThoughtId}
+              onRecordOutput={handleRecordThought}
+              onSelectOutput={handleSelectOutput}
+            />
+          </div>
         )}
       </div>
 

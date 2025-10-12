@@ -64,6 +64,10 @@ export default function BackgroundFX() {
       return { kind: "specks" as const, specks };
     }
 
+    if (themeId === "ocean-surfing") {
+      return { kind: "waves" as const };
+    }
+
     // Default fallback: floating specks
     {
       const count = 22;
@@ -154,6 +158,61 @@ export default function BackgroundFX() {
           @keyframes nodify-shaft-float {
             from { transform-origin: center; transform: translateY(0) rotate(var(--r, 0)); }
             to { transform: translateY(8vh) rotate(var(--r, 0)); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  if (fx.kind === "waves") {
+    return (
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" style={{ zIndex: 0 }}>
+        <svg className="absolute bottom-0 left-0 w-full" style={{ height: "220px" }} preserveAspectRatio="none" viewBox="0 0 1440 320">
+          <path
+            className="wave-animation"
+            fill="rgba(56, 189, 248, 0.4)"
+            d="M0,160L48,149.3C96,139,192,117,288,122.7C384,128,480,160,576,165.3C672,171,768,149,864,133.3C960,117,1056,107,1152,112C1248,117,1344,139,1392,149.3L1440,160L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z"
+          />
+          <path
+            className="wave-animation-2"
+            fill="rgba(14, 165, 233, 0.3)"
+            d="M0,192L48,181.3C96,171,192,149,288,154.7C384,160,480,192,576,197.3C672,203,768,181,864,165.3C960,149,1056,139,1152,144C1248,149,1344,171,1392,181.3L1440,192L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z"
+          />
+          <path
+            className="wave-animation-3"
+            fill="rgba(6, 182, 212, 0.2)"
+            d="M0,224L48,213.3C96,203,192,181,288,186.7C384,192,480,224,576,229.3C672,235,768,213,864,197.3C960,181,1056,171,1152,176C1248,181,1344,203,1392,213.3L1440,224L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z"
+          />
+        </svg>
+        <style jsx global>{`
+          @keyframes wave-flow {
+            0% { transform: translateY(0); }
+            50% { transform: translateY(-15px); }
+            100% { transform: translateY(0); }
+          }
+          @keyframes wave-flow-2 {
+            0% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+            100% { transform: translateY(0); }
+          }
+          @keyframes wave-flow-3 {
+            0% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0); }
+          }
+          .wave-animation {
+            animation: wave-flow 3s ease-in-out infinite;
+            transform-origin: center;
+          }
+          .wave-animation-2 {
+            animation: wave-flow-2 4s ease-in-out infinite;
+            animation-delay: 0.5s;
+            transform-origin: center;
+          }
+          .wave-animation-3 {
+            animation: wave-flow-3 3.5s ease-in-out infinite;
+            animation-delay: 1s;
+            transform-origin: center;
           }
         `}</style>
       </div>
