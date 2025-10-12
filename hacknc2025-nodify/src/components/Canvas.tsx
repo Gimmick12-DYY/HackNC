@@ -28,6 +28,17 @@ import { useAttention } from "./Attention";
 import { getNodeColor } from "@/utils/getNodeColor";
 import { useTheme, hexToRgba } from "./Themes";
 import BackgroundFX from "./BackgroundFX";
+import {
+  createHistoryManager,
+  recordAction,
+  undo as undoHistory,
+  redo as redoHistory,
+  canUndo,
+  canRedo,
+  getInverseAction,
+  type HistoryManager,
+  type HistoryAction,
+} from "@/utils/historyManager";
 
 type Props = {
   params: DashboardParams;
@@ -242,6 +253,11 @@ export default function Canvas({
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const confirmClearButtonRef = useRef<HTMLButtonElement | null>(null);
 
+  // 历史记录管理
+  const [historyManager, setHistoryManager] = useState<HistoryManager>(() => createHistoryManager(50));
+  const historyManagerRef = useRef(historyManager);
+  useEffect(() => { historyManagerRef.current = historyManager; }, [historyManager]);
+
   const showBanner = useCallback((text: string) => setTopBanner({ open: true, text }), []);
   const hideBanner = useCallback(() => setTopBanner({ open: false, text: '' }), []);
   const showSnack = useCallback((text: string, severity: 'info' | 'warning' | 'error' | 'success' = 'info') => {
@@ -249,6 +265,249 @@ export default function Canvas({
   }, []);
   const openClearConfirm = useCallback(() => setClearConfirmOpen(true), []);
   const closeClearConfirm = useCallback(() => setClearConfirmOpen(false), []);
+
+  // 历史记录辅助函数
+  const recordHistoryAction = useCallback((action: HistoryAction) => {
+    setHistoryManager((prev) => recordAction(prev, action));
+  }, []);
+
+  // 应用历史操作（用于撤销/重做）
+  const applyHistoryAction = useCallback((action: HistoryAction, isUndo: boolean) => {
+    const actionToApply = isUndo ? getInverseAction(action) : action;
+    const actions = Array.isArray(actionToApply) ? actionToApply : [actionToApply];
+
+    // 扁平化所有操作（处理嵌套的 BATCH）
+    const flattenActions = (acts: HistoryAction[]): HistoryAction[] => {
+      const result: HistoryAction[] = [];
+      for (const act of acts) {
+        if (act.type === "BATCH") {
+          result.push(...flattenActions(act.actions));
+        } else {
+          result.push(act);
+        }
+      }
+      return result;
+    };
+
+    const flatActions = flattenActions(actions);
+
+    for (const act of flatActions) {
+      switch (act.type) {
+        case "CREATE_NODE":
+          setNodes((prev) => {
+            // 只创建节点，不自动建立父子关系
+            // 父子关系应该由 CONNECT_NODES 操作来建立
+            return {
+              ...prev,
+              [act.nodeId]: act.nodeData,
+            };
+          });
+          break;
+
+        case "DELETE_NODE":
+          setNodes((prev) => {
+            const updated = { ...prev };
+            const nodeToDelete = updated[act.nodeId];
+            
+            // 如果节点有父节点，需要从父节点的 children 数组中移除
+            if (nodeToDelete && nodeToDelete.parentId && updated[nodeToDelete.parentId]) {
+              const parent = updated[nodeToDelete.parentId];
+              updated[nodeToDelete.parentId] = {
+                ...parent,
+                children: parent.children.filter((c) => c !== act.nodeId),
+              };
+            }
+            
+            delete updated[act.nodeId];
+            return updated;
+          });
+          setEdges((prev) =>
+            prev.filter(([p, c]) => p !== act.nodeId && c !== act.nodeId)
+          );
+          break;
+
+        case "MOVE_NODE":
+          setNodes((prev) => {
+            const node = prev[act.nodeId];
+            if (!node) return prev;
+            return {
+              ...prev,
+              [act.nodeId]: {
+                ...node,
+                x: act.newX,
+                y: act.newY,
+              },
+            };
+          });
+          break;
+
+        case "CONNECT_NODES":
+          setNodes((prev) => {
+            const child = prev[act.childId];
+            const parent = prev[act.parentId];
+            if (!child || !parent) return prev;
+            
+            const next = { ...prev };
+            
+            // 移除旧的父子关系
+            if (child.parentId && next[child.parentId]) {
+              const oldParent = next[child.parentId];
+              next[child.parentId] = {
+                ...oldParent,
+                children: oldParent.children.filter((c) => c !== act.childId),
+              };
+            }
+            
+            // 建立新的父子关系
+            next[act.parentId] = {
+              ...parent,
+              children: parent.children.includes(act.childId)
+                ? parent.children
+                : [...parent.children, act.childId],
+            };
+            
+            next[act.childId] = {
+              ...child,
+              parentId: act.parentId,
+            };
+            
+            return next;
+          });
+          
+          setEdges((prev) => {
+            const withoutOld = prev.filter(
+              ([p, c]) => !(c === act.childId && p !== act.parentId)
+            );
+            const exists = withoutOld.some(
+              ([p, c]) => p === act.parentId && c === act.childId
+            );
+            return exists ? withoutOld : [...withoutOld, [act.parentId, act.childId] as [string, string]];
+          });
+          break;
+
+        case "DISCONNECT_NODES":
+          setNodes((prev) => {
+            const child = prev[act.childId];
+            if (!child || child.parentId !== act.parentId) return prev;
+            
+            const next = { ...prev };
+            const parent = next[act.parentId];
+            
+            if (parent) {
+              next[act.parentId] = {
+                ...parent,
+                children: parent.children.filter((c) => c !== act.childId),
+              };
+            }
+            
+            next[act.childId] = {
+              ...child,
+              parentId: null,
+            };
+            
+            return next;
+          });
+          
+          setEdges((prev) =>
+            prev.filter(([p, c]) => !(p === act.parentId && c === act.childId))
+          );
+          break;
+
+        case "UPDATE_NODE_TEXT":
+          setNodes((prev) => {
+            const node = prev[act.nodeId];
+            if (!node) return prev;
+            return {
+              ...prev,
+              [act.nodeId]: {
+                ...node,
+                short: act.newText,
+                full: act.newFull || act.newText,
+              },
+            };
+          });
+          break;
+
+        case "BATCH":
+          // 递归处理批量操作
+          act.actions.forEach((subAction) =>
+            applyHistoryAction(subAction, isUndo)
+          );
+          break;
+
+        case "DELETE_MULTIPLE_NODES":
+          // 删除多个节点
+          setNodes((prev) => {
+            const updated = { ...prev };
+            act.deletedNodes.forEach(({ id }) => {
+              delete updated[id];
+            });
+            return updated;
+          });
+          setEdges((prev) =>
+            prev.filter(
+              ([p, c]) =>
+                !act.deletedNodes.some(({ id }) => id === p || id === c)
+            )
+          );
+          break;
+
+        case "EXPAND_NODE":
+          // 扩展节点
+          setNodes((prev) => {
+            const updated = { ...prev };
+            act.newNodes.forEach(({ id, data }) => {
+              updated[id] = data;
+            });
+            return updated;
+          });
+          setEdges((prev) => [...prev, ...act.newEdges]);
+          break;
+      }
+    }
+  }, []);
+
+  // 撤销函数
+  const performUndo = useCallback(() => {
+    if (!canUndo(historyManagerRef.current)) {
+      showSnack("Nothing to undo", "info");
+      return;
+    }
+
+    const result = undoHistory(historyManagerRef.current);
+    if (result.action) {
+      setHistoryManager(result.manager);
+      applyHistoryAction(result.action, true);
+      
+      // 触发物理引擎稳定
+      if (schedulePhysicsSettleRef.current) {
+        schedulePhysicsSettleRef.current(1500);
+      }
+      
+      showSnack("Undo successful", "success");
+    }
+  }, [applyHistoryAction, showSnack]);
+
+  // 重做函数
+  const performRedo = useCallback(() => {
+    if (!canRedo(historyManagerRef.current)) {
+      showSnack("Nothing to redo", "info");
+      return;
+    }
+
+    const result = redoHistory(historyManagerRef.current);
+    if (result.action) {
+      setHistoryManager(result.manager);
+      applyHistoryAction(result.action, false);
+      
+      // 触发物理引擎稳定
+      if (schedulePhysicsSettleRef.current) {
+        schedulePhysicsSettleRef.current(1500);
+      }
+      
+      showSnack("Redo successful", "success");
+    }
+  }, [applyHistoryAction, showSnack]);
 
   useEffect(() => {
     if (!registerCanvasActions) return;
@@ -297,6 +556,7 @@ export default function Canvas({
   const nodeHoldInfoRef = useRef<{ nodeId: string; startClient: { x: number; y: number }; startCanvas: { x: number; y: number } } | null>(null);
   const instructionsButtonRef = useRef<HTMLButtonElement | null>(null);
   const canvasPointerIdRef = useRef<number | null>(null);
+  const schedulePhysicsSettleRef = useRef<((duration?: number) => void) | null>(null);
 
   useEffect(() => {
     if (instructionsButtonRef.current) {
@@ -320,6 +580,31 @@ export default function Canvas({
       window.removeEventListener("keydown", handleKeydown);
     };
   }, [clearConfirmOpen, closeClearConfirm]);
+  
+  // 添加撤销/重做快捷键监听
+  useEffect(() => {
+    const handleUndoRedo = (event: KeyboardEvent) => {
+      // Ctrl+Z 或 Cmd+Z（撤销）
+      if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        performUndo();
+      }
+      // Ctrl+Y 或 Ctrl+Shift+Z 或 Cmd+Shift+Z（重做）
+      else if (
+        ((event.ctrlKey || event.metaKey) && event.key === 'y') ||
+        ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'z')
+      ) {
+        event.preventDefault();
+        performRedo();
+      }
+    };
+
+    window.addEventListener('keydown', handleUndoRedo);
+    return () => {
+      window.removeEventListener('keydown', handleUndoRedo);
+    };
+  }, [performUndo, performRedo]);
+
   useEffect(() => {
     if (clearConfirmOpen) {
       confirmClearButtonRef.current?.focus();
@@ -743,6 +1028,11 @@ export default function Canvas({
       ensurePhysicsActive();
     });
   }, [ensurePhysicsActive]);
+  
+  // 将 schedulePhysicsSettle 存储到 ref 中，以便在定义之前的函数中使用
+  useEffect(() => {
+    schedulePhysicsSettleRef.current = schedulePhysicsSettle;
+  }, [schedulePhysicsSettle]);
 
   const buildGraphSnapshot = useCallback((): SerializedGraphState => {
     const nodesPayload: SerializedGraphNode[] = Object.values(nodes).map((node) => ({
@@ -1678,6 +1968,13 @@ export default function Canvas({
     commitFocus(id);
     schedulePhysicsSettle();
     
+    // 记录历史
+    recordHistoryAction({
+      type: "CREATE_NODE",
+      nodeId: id,
+      nodeData: node,
+    });
+    
     setContextMenu(null); // Hide menu after action
   };
 
@@ -1830,14 +2127,29 @@ export default function Canvas({
       if (!options?.silentSuccess) {
         showSnack("Nodes connected successfully", "success");
       }
+      
+      // 记录历史
+      recordHistoryAction({
+        type: "CONNECT_NODES",
+        parentId,
+        childId,
+      });
+      
       return true;
     },
-    [computeSizeByDepth, schedulePhysicsSettle, showSnack]
+    [computeSizeByDepth, schedulePhysicsSettle, showSnack, recordHistoryAction]
   );
 
   // 文本更新（来自 Node 内联编辑）
   const handleUpdateText = useCallback(
     (id: string, value: string) => {
+      // 先获取旧文本用于历史记录
+      const oldNode = nodesRef.current[id];
+      if (!oldNode) return;
+      
+      const oldText = oldNode.short || "";
+      const oldFull = oldNode.full || "";
+      
       setNodes((prev) => {
         const n = prev[id];
         if (!n) return prev;
@@ -1869,8 +2181,22 @@ export default function Canvas({
           },
         };
       });
+      
+      // 记录历史（只有在文本真正改变时）
+      const newText = value.trim().split(/\s+/)[0] || value.trim();
+      const newFull = value.trim();
+      if (oldText !== newText || oldFull !== newFull) {
+        recordHistoryAction({
+          type: "UPDATE_NODE_TEXT",
+          nodeId: id,
+          oldText,
+          newText,
+          oldFull,
+          newFull,
+        });
+      }
     },
-    [getDepthIn, computeSizeByDepth, theme]
+    [getDepthIn, computeSizeByDepth, theme, recordHistoryAction]
   );
 
   const emitInfoFor = useCallback(
@@ -2263,19 +2589,54 @@ export default function Canvas({
       dragFrameRef.current = null;
     }
     dragPendingRef.current.clear();
-  }, [previewState.parentId, ensurePhysicsActive]);
+    
+    // 记录历史（只有在真正移动了且有原始位置时才记录）
+    if (originalX !== undefined && originalY !== undefined && (originalX !== x || originalY !== y)) {
+      recordHistoryAction({
+        type: "MOVE_NODE",
+        nodeId: id,
+        oldX: originalX,
+        oldY: originalY,
+        newX: x,
+        newY: y,
+      });
+    }
+  }, [previewState.parentId, ensurePhysicsActive, recordHistoryAction]);
 
   const onDelete = useCallback((id: string) => {
+    // 在删除前保存节点数据和边
+    const nodeToDelete = nodesRef.current[id];
+    if (!nodeToDelete) return;
+    
+    const connectedEdges = edgesRef.current.filter(
+      ([parent, child]) => parent === id || child === id
+    );
+    
+    // 检查是否需要更新焦点
+    const needsNewFocus = committedFocusIdRef.current === id;
+    let nextFocus: string | null = null;
+    
     setNodes((prev) => {
       const updated = { ...prev };
       delete updated[id];
-      if (committedFocusIdRef.current === id) {
+      
+      // 如果需要新焦点，在这里计算但不调用 commitFocus
+      if (needsNewFocus) {
         const remainingIds = Object.keys(updated);
-        const nextFocus = remainingIds.length ? remainingIds[0] : null;
-        commitFocus(nextFocus);
+        nextFocus = remainingIds.length ? remainingIds[0] : null;
       }
+      
       return updated;
     });
+    
+    // 在状态更新完成后调用 commitFocus
+    if (needsNewFocus) {
+      // 使用 queueMicrotask 确保在渲染周期之外调用
+      queueMicrotask(() => {
+        commitFocus(nextFocus);
+      });
+    }
+    
     // Also remove any edges connected to this node
     setEdges((prev) => prev.filter(([parent, child]) => parent !== id && child !== id));
     // Clear selection if this node was selected
@@ -2298,7 +2659,15 @@ export default function Canvas({
     setPendingConnection((current) =>
       current && current.childId === id ? null : current
     );
-  }, [commitFocus, resetPreviewPointerTracking]);
+    
+    // 记录历史
+    recordHistoryAction({
+      type: "DELETE_NODE",
+      nodeId: id,
+      nodeData: nodeToDelete,
+      connectedEdges,
+    });
+  }, [commitFocus, resetPreviewPointerTracking, recordHistoryAction]);
 
   // 重写的智能散布算法
   const arrangeAroundSmart = useCallback((centerX: number, centerY: number, childCount: number, parentId: string) => {
@@ -2494,6 +2863,8 @@ Respond with valid JSON only.`;
         const positions = arrangeAroundSmart(parentCenterX, parentCenterY, items.length, id);
         
         // Update nodes with new children
+        const newNodesForHistory: Array<{ id: string; data: NodeItem }> = [];
+        
         setNodes((prev) => {
           const updated = { ...prev };
           const parent = updated[id];
@@ -2516,7 +2887,7 @@ Respond with valid JSON only.`;
             const emojiValue = content.emoji?.trim();
             const nodeType = content.type?.trim() || "idea";
             
-            updated[childId] = {
+            const newNode: NodeItem = {
               id: childId,
               full,
               phrase,
@@ -2533,6 +2904,9 @@ Respond with valid JSON only.`;
               level: parentDepth + 1,
               dotColor: getNodeColor(nodeType, theme),
             };
+            
+            updated[childId] = newNode;
+            newNodesForHistory.push({ id: childId, data: newNode });
             childIds.push(childId);
             childEdges.push([id, childId]);
           });
@@ -2545,6 +2919,16 @@ Respond with valid JSON only.`;
           schedulePhysicsSettle();
         }
         
+        // 记录扩展节点的历史
+        if (newNodesForHistory.length > 0) {
+          recordHistoryAction({
+            type: "EXPAND_NODE",
+            parentId: id,
+            newNodes: newNodesForHistory,
+            newEdges: childEdges,
+          });
+        }
+        
       } catch (error) {
         console.error('Error in generation:', error);
       } finally {
@@ -2552,7 +2936,7 @@ Respond with valid JSON only.`;
         generatingNodesRef.current.delete(id);
       }
     },
-    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart, computeSizeByDepth, getDepthIn, schedulePhysicsSettle, showSnack, theme]
+    [params.nodeCount, params.phraseLength, params.temperature, arrangeAroundSmart, computeSizeByDepth, getDepthIn, schedulePhysicsSettle, showSnack, theme, recordHistoryAction]
   );
 
   const generatingNodesRef = useRef(new Set<string>());
@@ -3952,7 +4336,7 @@ Respond with valid JSON only.`;
         </Alert>
       </Snackbar>
 
-      <div className="fixed bottom-6 left-6 z-[70] pointer-events-none flex flex-col items-start gap-3">
+      <div className="fixed bottom-6 left-6 z-[100] pointer-events-none flex flex-col items-start gap-3">
         <AnimatePresence>
           {instructionsOpen && (
             <motion.div
@@ -3963,15 +4347,27 @@ Respond with valid JSON only.`;
               transition={{ duration: 0.2, ease: "easeOut" }}
               className="pointer-events-auto text-sm bg-white/80 backdrop-blur rounded-2xl px-4 py-2 shadow border border-white/60 max-w-xl text-left select-none"
               style={{ color: theme.ui.sidebar.textSecondary, caretColor: "transparent" }}
+              onAnimationComplete={() => console.log('Instructions animation complete')}
             >
-        Hold canvas 0.5s to seed an idea • Long-press a node or right-click → Expand with AI • Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select • Right-click for tools
+              <div className="space-y-1">
+                <div><strong>Create:</strong> Hold canvas 0.5s to seed an idea • Right-click canvas → Generate New Node</div>
+                <div><strong>Expand:</strong> Long-press a node or right-click → Expand with AI</div>
+                <div><strong>Connect:</strong> Right-click node → Connect to Node, then click target</div>
+                <div><strong>Delete:</strong> Right-click node → Delete Node • Select multiple nodes → Delete All</div>
+                <div><strong>Navigate:</strong> Scroll to zoom • Middle-click drag to pan • Drag on empty space to marquee-select</div>
+                <div><strong>History:</strong> Ctrl+Z to undo • Ctrl+Y to redo (works for create, delete, move, connect, expand)</div>
+                <div><strong>More:</strong> Right-click for tools • Double-click node to edit</div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
         <button
           ref={instructionsButtonRef}
           type="button"
-          onClick={() => setInstructionsOpen((open) => !open)}
+          onClick={() => {
+            console.log('Guide button clicked, current state:', instructionsOpen);
+            setInstructionsOpen((open) => !open);
+          }}
           className="pointer-events-auto rounded-full shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 group overflow-hidden"
           style={{
             color: floatingButton.text,
