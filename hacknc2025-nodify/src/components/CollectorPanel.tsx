@@ -1148,7 +1148,7 @@ export default function CollectorPanel({
                 )}
               </div>
               <div className="text-[11px] mt-2" style={{ color: sidebar.textMuted }}>
-                Drop nodes to add them as evidences.
+                Drag nodes from above to add them as evidences.
               </div>
             </div>
           </div>
@@ -1234,7 +1234,7 @@ export default function CollectorPanel({
               {renderGenerateButton("debate")}
             </div>
             <p className="text-[12px] mb-2" style={{ color: sidebar.textMuted }}>
-              Drop nodes to add them as debate participants.
+              Drag nodes from above to add them as debate participants.
             </p>
             <div
               ref={(el) => { listRefs.current["debate-participants"] = el; }}
