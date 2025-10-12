@@ -504,7 +504,9 @@ export default function Canvas({
     lastTs: number;
     velocities: Map<string, Velocity>;
     settleUntil: number | null; // run until this timestamp when not dragging
-  }>({ running: false, frameId: null, lastTs: 0, velocities: new Map(), settleUntil: null });
+    updateCounter: number; // throttle setNodes calls
+    lastUpdateTs: number; // last time we called setNodes
+  }>({ running: false, frameId: null, lastTs: 0, velocities: new Map(), settleUntil: null, updateCounter: 0, lastUpdateTs: 0 });
 
   const ensurePhysicsActive = useCallback(() => {
     const s = physicsStateRef.current;
@@ -707,7 +709,14 @@ export default function Canvas({
         }
         if (mutated) {
           nodesRef.current = nextNodes;
-          setNodes(nextNodes);
+          // Throttle setNodes to every 3rd frame or every 50ms to prevent infinite loops
+          const timeSinceLastUpdate = ts - s.lastUpdateTs;
+          s.updateCounter++;
+          if (s.updateCounter >= 3 || timeSinceLastUpdate >= 50 || draggingNodesRef.current.size > 0) {
+            setNodes(nextNodes);
+            s.updateCounter = 0;
+            s.lastUpdateTs = ts;
+          }
         }
       }
 
@@ -1201,12 +1210,21 @@ export default function Canvas({
       setMultiSelectMenu(null);
       return;
     }
+    
+    // If menu is already open, don't recalculate position (preserve user's right-click position)
+    // Only update if the selection has changed significantly
+    const sameLength = multiSelectMenu.ids.length === ids.length;
+    const sameIds = sameLength && multiSelectMenu.ids.every((value, index) => value === ids[index]);
+    
+    if (sameIds) {
+      // Selection hasn't changed, keep the current position
+      return;
+    }
+    
+    // Selection changed, recalculate position
     const position = computeMultiSelectMenuPosition(ids);
     setMultiSelectMenu((prev) => {
       if (!prev) return prev;
-      const sameLength = prev.ids.length === ids.length;
-      const sameIds =
-        sameLength && prev.ids.every((value, index) => value === ids[index]);
       const samePosition =
         Math.abs(prev.x - position.x) < 0.1 &&
         Math.abs(prev.y - position.y) < 0.1;
@@ -1600,14 +1618,25 @@ export default function Canvas({
     x = Math.max(padding, x);
     y = Math.max(padding, y);
     
-    setMultiSelectMenu(null);
-    setContextMenu({ 
-      x, 
-      y, 
-      originalX: e.clientX, 
-      originalY: e.clientY, 
-      type: 'canvas' 
-    });
+    // If multiple nodes are selected, show multi-select menu instead
+    if (selectedIds.size > 1) {
+      setContextMenu(null);
+      setMultiSelectMenu({
+        open: true,
+        ids: Array.from(selectedIds),
+        x,
+        y
+      });
+    } else {
+      setMultiSelectMenu(null);
+      setContextMenu({ 
+        x, 
+        y, 
+        originalX: e.clientX, 
+        originalY: e.clientY, 
+        type: 'canvas' 
+      });
+    }
   };
 
   const onGenerateNewNode = () => {
@@ -1804,38 +1833,6 @@ export default function Canvas({
     [computeSizeByDepth, schedulePhysicsSettle, showSnack]
   );
 
-  const connectSelectedNodes = useCallback(() => {
-    const ids = Array.from(selectedIdsRef.current);
-    if (ids.length < 2) {
-      showSnack("Select at least two nodes to connect", "warning");
-      return;
-    }
-    const [parentId, ...childrenIds] = ids;
-    let successCount = 0;
-    childrenIds.forEach((childId) => {
-      const result = connectNodes(childId, parentId, { silentSuccess: true });
-      if (result) {
-        successCount += 1;
-      }
-    });
-    if (successCount === 0) {
-      showSnack("Unable to connect selected nodes", "warning");
-      return;
-    }
-    if (successCount < childrenIds.length) {
-      showSnack(
-        `Connected ${successCount + 1} of ${childrenIds.length + 1} nodes`,
-        "info"
-      );
-    } else {
-      showSnack(`Connected ${childrenIds.length + 1} nodes`, "success");
-    }
-    setMultiSelectMenu(null);
-    const normalizedSelection = new Set(ids);
-    setSelectedIds(normalizedSelection);
-    commitFocus(parentId);
-  }, [commitFocus, connectNodes, showSnack]);
-
   // 点击节点：单选并打开信息
   const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
     if (pendingConnection) {
@@ -1978,6 +1975,31 @@ export default function Canvas({
       }
     };
 
+  const handleMultiSelectMenuAction = (action: string, nodeIds: string[]) => {
+    setMultiSelectMenu(null);
+    
+    switch (action) {
+      case 'delete':
+        // Delete all selected nodes
+        nodeIds.forEach(id => onDelete?.(id));
+        showSnack(`Deleted ${nodeIds.length} nodes`, "success");
+        setSelectedIds(new Set());
+        break;
+      case 'collect':
+        // Add all selected nodes to collector
+        let addedCount = 0;
+        nodeIds.forEach(id => {
+          const node = nodes[id];
+          if (node) {
+            onCollectorAdd?.(node);
+            addedCount++;
+          }
+        });
+        showSnack(`Added ${addedCount} nodes to Collector`, "success");
+        break;
+    }
+  };
+
   useEffect(() => {
     if (!onRequestInfo) return;
     if (selectedIds.size === 1) {
@@ -2016,16 +2038,27 @@ export default function Canvas({
     x = Math.max(padding, x);
     y = Math.max(padding, y);
     
-    setMultiSelectMenu(null);
-    setContextMenu({ 
-      x, 
-      y, 
-      originalX: e.clientX, 
-      originalY: e.clientY, 
-      type: 'node', 
-      nodeId 
-    });
-  }, [setContextMenu]);
+    // If multiple nodes are selected and the right-clicked node is one of them, show multi-select menu
+    if (selectedIds.size > 1 && selectedIds.has(nodeId)) {
+      setContextMenu(null);
+      setMultiSelectMenu({
+        open: true,
+        ids: Array.from(selectedIds),
+        x,
+        y
+      });
+    } else {
+      setMultiSelectMenu(null);
+      setContextMenu({ 
+        x, 
+        y, 
+        originalX: e.clientX, 
+        originalY: e.clientY, 
+        type: 'node', 
+        nodeId 
+      });
+    }
+  }, [setContextMenu, selectedIds]);
 
   // Keep edgesRef in sync
   useEffect(() => { edgesRef.current = edges; }, [edges]);
@@ -2045,8 +2078,9 @@ export default function Canvas({
       // 如果是组拖拽，记录所有选中节点的原始位置
       if (selectedIdsRef.current.size > 1 && selectedIdsRef.current.has(id)) {
         const origin = new Map<string, { x: number; y: number }>();
+        const currentNodes = nodesRef.current;
         selectedIdsRef.current.forEach(sid => {
-          const n = nodes[sid];
+          const n = currentNodes[sid];
           if (n) origin.set(sid, { x: n.x, y: n.y });
         });
         groupDragStartRef.current = { anchorId: id, origin };
@@ -2100,7 +2134,7 @@ export default function Canvas({
         });
       });
     }
-  }, [previewState.parentId, nodes, ensurePhysicsActive]);
+  }, [previewState.parentId, ensurePhysicsActive]);
 
   const onMoveEnd = useCallback((id: string, x: number, y: number, originalX?: number, originalY?: number) => {
     if (previewState.parentId === id) {
@@ -3355,36 +3389,6 @@ Respond with valid JSON only.`;
           document.body
         )}
 
-      {multiSelectMenu && typeof document !== "undefined" && createPortal(
-        <div
-          ref={(node) => {
-            multiSelectMenuRef.current = node;
-          }}
-          className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg py-2 px-3 min-w-[220px]"
-          style={{
-            left: multiSelectMenu.x,
-            top: multiSelectMenu.y,
-            transform: "translate(-50%, -120%)",
-          }}
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onContextMenu={(e) => e.stopPropagation()}
-        >
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            {multiSelectMenu.ids.length} nodes selected
-          </div>
-          <div className="flex flex-col gap-1">
-            <button
-              className="w-full px-3 py-2 rounded-md text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
-              onClick={connectSelectedNodes}
-            >
-              <span>Connect Selected</span>
-            </button>
-          </div>
-        </div>,
-        document.body
-      )}
-
       {/* Context Menu - Render in Portal for consistent positioning */}
       {contextMenu && typeof document !== 'undefined' && createPortal(
         <div
@@ -3492,6 +3496,56 @@ Respond with valid JSON only.`;
               </button>
             </>
           ) : null}
+        </div>,
+        document.body
+      )}
+
+      {/* Multi-Select Menu - Render in Portal */}
+      {multiSelectMenu && multiSelectMenu.open && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={multiSelectMenuRef}
+          className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[200px]"
+          style={{
+            left: multiSelectMenu.x,
+            top: multiSelectMenu.y,
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          <div className="px-4 py-2 text-xs font-semibold text-gray-500 border-b border-gray-100">
+            {multiSelectMenu.ids.length} nodes selected
+          </div>
+          {onCollectorAdd && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+              onClick={() => handleMultiSelectMenuAction('collect', multiSelectMenu.ids)}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-4 h-4 text-emerald-500"
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672M12 2.25V4.5m5.834.166-1.591 1.591M20.25 10.5H18M7.757 14.743l-1.59 1.59M6 10.5H3.75m4.007-4.243-1.59-1.59"
+                />
+              </svg>
+              Add All to Collector
+            </button>
+          )}
+          <button
+            className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+            onClick={() => handleMultiSelectMenuAction('delete', multiSelectMenu.ids)}
+          >
+            <CloseRoundedIcon fontSize="small" className="text-red-500" />
+            Delete All Selected
+          </button>
         </div>,
         document.body
       )}

@@ -177,6 +177,9 @@ export default function CollectorPanel({
   const hideButtonBorder = isHideHovered
     ? hexToRgba(sidebar.headerText, 0.32)
     : sidebar.cardBorder;
+  
+  // Output length control (in words)
+  const [outputLength, setOutputLength] = React.useState(200);
 
   const createDraft = React.useCallback((): CollectorState => ({
     argument: {
@@ -270,13 +273,11 @@ export default function CollectorPanel({
 
   const requestGeneration = React.useCallback(async (prompt: string): Promise<string | null> => {
     try {
-      const res = await fetch("/api/generate", {
+      const res = await fetch("/api/generate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
-          count: 1,
-          phraseLength: 12,
           temperature: 0.7,
         }),
       });
@@ -284,10 +285,7 @@ export default function CollectorPanel({
         throw new Error(`Generation failed (${res.status})`);
       }
       const data = await res.json();
-      const text =
-        Array.isArray(data.items) && data.items[0]
-          ? data.items[0].full || data.items[0].text || String(data.items[0])
-          : "";
+      const text = data?.text ?? "";
       const result = String(text || "").trim();
       if (!result) {
         throw new Error("No response generated");
@@ -410,12 +408,18 @@ export default function CollectorPanel({
         ? `Supporting evidence:\n${buildNodeList(evidences)}`
         : "Supporting evidence: none provided. Invent 3 credible, distinct evidences that strongly support the claim.",
       "",
-      "Write an articulate persuasive explanation (around 200 words) backing the claim and list the supporting evidences afterwards as bullet points."
+      `Write an articulate persuasive explanation (around ${outputLength} words) backing the claim and list the supporting evidences afterwards as bullet points.`
     ].join("\n");
+    
+    console.log("=== Argument Generation ===");
+    console.log("Output Length:", outputLength);
+    console.log("Prompt:", prompt);
+    
     setGeneratingMode("argument");
     try {
       const text = await requestGeneration(prompt);
       if (text) {
+        console.log("Generated text length (words):", text.split(/\s+/).length);
         emitOutput("argument", {
           title: `Argument • ${getNodeLabel(main)}`,
           content: text,
@@ -424,7 +428,7 @@ export default function CollectorPanel({
     } finally {
       setGeneratingMode(null);
     }
-  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.argument]);
+  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.argument, outputLength]);
 
   const handleGenerateCounter = React.useCallback(async () => {
     if (generatingMode) return;
@@ -442,12 +446,18 @@ export default function CollectorPanel({
         ? `Existing counter-evidences:\n${buildNodeList(existing)}`
         : "No counter-evidences were supplied. Invent several credible evidences that undermine the target statement.",
       "",
-      "Produce a compelling counter-argument (around 200 words) followed by bullet points listing the evidences you rely on."
+      `Produce a compelling counter-argument (around ${outputLength} words) followed by bullet points listing the evidences you rely on.`
     ].join("\n");
+    
+    console.log("=== Counter Generation ===");
+    console.log("Output Length:", outputLength);
+    console.log("Prompt:", prompt);
+    
     setGeneratingMode("counter");
     try {
       const text = await requestGeneration(prompt);
       if (text) {
+        console.log("Generated text length (words):", text.split(/\s+/).length);
         emitOutput("counter", {
           title: `Counterpoint • ${getNodeLabel(main)}`,
           content: text,
@@ -456,7 +466,7 @@ export default function CollectorPanel({
     } finally {
       setGeneratingMode(null);
     }
-  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.counter]);
+  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.counter, outputLength]);
 
   const handleGenerateScript = React.useCallback(async () => {
     if (generatingMode) return;
@@ -469,12 +479,18 @@ export default function CollectorPanel({
       "Write a descriptive, engaging narrative that follows the ordered outline points below.",
       buildNodeList(outline),
       "",
-      "Produce 2-3 flowing paragraphs (around 220 words) that clearly reference each outline point."
+      `Produce 2-3 flowing paragraphs (around ${outputLength} words) that clearly reference each outline point.`
     ].join("\n");
+    
+    console.log("=== Script Generation ===");
+    console.log("Output Length:", outputLength);
+    console.log("Prompt:", prompt);
+    
     setGeneratingMode("script");
     try {
       const text = await requestGeneration(prompt);
       if (text) {
+        console.log("Generated text length (words):", text.split(/\s+/).length);
         emitOutput("script", {
           title: "Script",
           content: text,
@@ -483,7 +499,7 @@ export default function CollectorPanel({
     } finally {
       setGeneratingMode(null);
     }
-  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.script.outline]);
+  }, [buildNodeList, emitOutput, generatingMode, requestGeneration, state.script.outline, outputLength]);
 
   const handleGenerateDebate = React.useCallback(async () => {
     if (generatingMode) return;
@@ -920,6 +936,75 @@ export default function CollectorPanel({
 
   return (
     <>
+      <style dangerouslySetInnerHTML={{__html: `
+        .collector-slider {
+          -webkit-appearance: none;
+          appearance: none;
+        }
+        .collector-slider::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 8px;
+          cursor: pointer;
+          border-radius: 4px;
+        }
+        .collector-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: ${accent};
+          cursor: grab;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+          margin-top: -5px;
+        }
+        .collector-slider::-webkit-slider-thumb:hover {
+          transform: scale(1.15);
+          box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+        }
+        .collector-slider::-webkit-slider-thumb:active {
+          transform: scale(1.05);
+          cursor: grabbing;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        .collector-slider::-moz-range-track {
+          width: 100%;
+          height: 8px;
+          cursor: pointer;
+          border-radius: 4px;
+        }
+        .collector-slider::-moz-range-thumb {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: ${accent};
+          cursor: grab;
+          border: none;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .collector-slider::-moz-range-thumb:hover {
+          transform: scale(1.15);
+          box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+        }
+        .collector-slider::-moz-range-thumb:active {
+          transform: scale(1.05);
+          cursor: grabbing;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        .collector-slider:focus {
+          outline: none;
+        }
+        .collector-slider:focus-visible::-webkit-slider-thumb {
+          outline: 2px solid ${accent};
+          outline-offset: 2px;
+        }
+        .collector-slider:focus-visible::-moz-range-thumb {
+          outline: 2px solid ${accent};
+          outline-offset: 2px;
+        }
+      `}} />
       <motion.div
         ref={panelRef}
         initial={{ opacity: 0, x: 40 }}
@@ -961,11 +1046,37 @@ export default function CollectorPanel({
       </div>
 
       <div className="p-4 border-b flex items-start justify-between gap-3" style={{ borderBottomColor: sidebar.border, background: sidebar.headerBackground }}>
-        <div>
+        <div className="flex-1">
           <h2 className="text-lg font-semibold" style={{ color: sidebar.headerText }}>Collector</h2>
           <p className="text-sm mt-1" style={{ color: sidebar.headerSubtext }}>
             Drop or right-click a node to collect it.
           </p>
+          
+          {/* Output Length Slider */}
+          <div className="mt-3 space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <label htmlFor="output-length-slider" style={{ color: sidebar.textMuted }}>
+                Output Length
+              </label>
+              <span className="font-medium" style={{ color: sidebar.headerText }}>
+                {outputLength} weight
+              </span>
+            </div>
+            <input
+              id="output-length-slider"
+              type="range"
+              min="30"
+              max="300"
+              step="10"
+              value={outputLength}
+              onInput={(e) => setOutputLength(Number((e.target as HTMLInputElement).value))}
+              onChange={(e) => setOutputLength(Number(e.target.value))}
+              className="w-full h-2 rounded-lg appearance-none cursor-pointer collector-slider"
+              style={{
+                background: `linear-gradient(to right, ${accent} 0%, ${accent} ${((outputLength - 30) / (300 - 30)) * 100}%, ${sidebar.cardBorder} ${((outputLength - 30) / (300 - 30)) * 100}%, ${sidebar.cardBorder} 100%)`,
+              }}
+            />
+          </div>
         </div>
         <button
           type="button"

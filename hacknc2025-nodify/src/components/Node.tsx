@@ -138,9 +138,11 @@ export default function NodeCard({
     focusedNodeId === node.id
       ? (getDisplayContent(node, 0) || node.full || node.text || "")
       : "";
+  
   const circleRadius = targetDiameter / 2;
   const fontSize =
     theme.node.label.fontSize ?? NodeVisualConfig.FOCUSED_LABEL.fontSize;
+  
   const charWidthFactor =
     NodeVisualConfig.FOCUSED_LABEL.charWidthFactor ?? 0.55;
   const arcRadiusOffset =
@@ -493,7 +495,7 @@ export default function NodeCard({
               aria-label={ariaLabel}
             >
               {displayEmoji ? (
-                <span className="text-2xl leading-none">{displayEmoji}</span>
+                <span className="text-6xl leading-none">{displayEmoji}</span>
               ) : (
                 <>
                   <span
@@ -507,67 +509,45 @@ export default function NodeCard({
           )}
         </motion.div>
       </motion.div>
-      {/* Focused label text curved along the node arc */}
-      {isFocused && !node.minimized && labelLines.length > 0 && (
+      {/* Focused label text as horizontal text below the node */}
+      {isFocused && !node.minimized && focusedLabelText && (
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 6 }}
+          exit={{ opacity: 0, y: -6 }}
           transition={{ duration: transition.duration, ease: transition.ease }}
           className="absolute left-1/2 -translate-x-1/2 pointer-events-none"
           style={{
-            bottom: `${circleRadius + NodeVisualConfig.FOCUSED_LABEL.offset}px`,
+            top: `calc(100% + 12px)`,
             zIndex: highlight || focusedNodeId === node.id ? 40 : 20,
           }}
         >
-          <svg
-            width={svgWidth}
-            height={svgHeight}
-            viewBox={viewBox}
-            style={{ overflow: "visible", display: "block" }}
-            aria-hidden
+          <div
+            className="px-3 py-2 rounded-lg backdrop-blur-md"
+            style={{
+              backgroundColor: hexToRgba(theme.canvas.background, 0.15),
+              border: `1px solid ${hexToRgba(nodeColor, 0.3)}`,
+              boxShadow: `0 2px 8px ${hexToRgba(nodeColor, 0.2)}`,
+              maxWidth: '400px',
+              width: 'max-content',
+            }}
           >
-            <defs>
-              <filter id={`${node.id}-label-blur`}>
-                <feGaussianBlur in="SourceGraphic" stdDeviation={backgroundBlur} />
-              </filter>
-            </defs>
-            
-            {/* Render text lines on curved arcs, but keep text horizontal/readable */}
-            {displayLines.map((line, index) => {
-              const lineOffset = arcRadiusOffset + index * lineHeight;
-              const pathRadius = circleRadius + lineOffset;
-              const baselineY = -pathRadius;
-              const pathId = `${node.id}-focus-arc-${labelLines.length - 1 - index}`;
-              
-              return (
-                <React.Fragment key={pathId}>
-                  {/* Define the arc path for this line */}
-                  <path 
-                    id={pathId} 
-                    d={`M ${-circleRadius} ${baselineY} A ${pathRadius} ${pathRadius} 0 0 1 ${circleRadius} ${baselineY}`} 
-                    fill="none" 
-                  />
-                  {/* Render text along the arc path */}
-                  <text
-                    fill={labelTextColor}
-                    fontSize={fontSize}
-                    style={{ letterSpacing: labelLetterSpacing, fontWeight: 500 }}
-                  >
-                    <textPath
-                      xlinkHref={`#${pathId}`}
-                      startOffset="50%"
-                      textAnchor="middle"
-                      method="align"
-                      spacing="auto"
-                    >
-                      {line}
-                    </textPath>
-                  </text>
-                </React.Fragment>
-              );
-            })}
-          </svg>
+            <div
+              style={{
+                color: labelTextColor,
+                fontSize: fontSize,
+                fontWeight: 500,
+                letterSpacing: labelLetterSpacing,
+                textAlign: 'center',
+                lineHeight: 1.4,
+                whiteSpace: 'normal',
+                wordBreak: 'normal',
+                overflowWrap: 'anywhere',
+              }}
+            >
+              {focusedLabelText}
+            </div>
+          </div>
         </motion.div>
       )}
     </motion.div>

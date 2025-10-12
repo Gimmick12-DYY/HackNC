@@ -14,7 +14,7 @@ export const NodeVisualConfig = {
   },
   FOCUSED_LABEL: {
     offset: 0, // px gap between node and label (Y axis)
-    fontSize: 13, // px
+    fontSize: 20, // px
     textColor: "#111827",
     charWidthFactor: 0.55, // heuristic glyph width factor for wrapping
     arcRadiusOffset: 1, // px distance from node surface to first arc baseline
