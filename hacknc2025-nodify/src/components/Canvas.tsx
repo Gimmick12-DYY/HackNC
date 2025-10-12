@@ -293,7 +293,7 @@ export default function Canvas({
 
     // 批量应用所有操作，只调用一次 setNodes 和 setEdges
     setNodes((prevNodes) => {
-      let nodes = { ...prevNodes };
+      const nodes = { ...prevNodes };
       
       for (const act of flatActions) {
         switch (act.type) {
