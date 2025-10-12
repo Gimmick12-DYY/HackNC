@@ -291,180 +291,166 @@ export default function Canvas({
 
     const flatActions = flattenActions(actions);
 
-    for (const act of flatActions) {
-      switch (act.type) {
-        case "CREATE_NODE":
-          setNodes((prev) => {
-            // 只创建节点，不自动建立父子关系
-            // 父子关系应该由 CONNECT_NODES 操作来建立
-            return {
-              ...prev,
-              [act.nodeId]: act.nodeData,
-            };
-          });
-          break;
+    // 批量应用所有操作，只调用一次 setNodes 和 setEdges
+    setNodes((prevNodes) => {
+      let nodes = { ...prevNodes };
+      
+      for (const act of flatActions) {
+        switch (act.type) {
+          case "CREATE_NODE":
+            nodes[act.nodeId] = act.nodeData;
+            break;
 
-        case "DELETE_NODE":
-          setNodes((prev) => {
-            const updated = { ...prev };
-            const nodeToDelete = updated[act.nodeId];
+          case "DELETE_NODE": {
+            const nodeToDelete = nodes[act.nodeId];
             
             // 如果节点有父节点，需要从父节点的 children 数组中移除
-            if (nodeToDelete && nodeToDelete.parentId && updated[nodeToDelete.parentId]) {
-              const parent = updated[nodeToDelete.parentId];
-              updated[nodeToDelete.parentId] = {
+            if (nodeToDelete && nodeToDelete.parentId && nodes[nodeToDelete.parentId]) {
+              const parent = nodes[nodeToDelete.parentId];
+              nodes[nodeToDelete.parentId] = {
                 ...parent,
                 children: parent.children.filter((c) => c !== act.nodeId),
               };
             }
             
-            delete updated[act.nodeId];
-            return updated;
-          });
-          setEdges((prev) =>
-            prev.filter(([p, c]) => p !== act.nodeId && c !== act.nodeId)
-          );
-          break;
+            delete nodes[act.nodeId];
+            break;
+          }
 
-        case "MOVE_NODE":
-          setNodes((prev) => {
-            const node = prev[act.nodeId];
-            if (!node) return prev;
-            return {
-              ...prev,
-              [act.nodeId]: {
+          case "MOVE_NODE": {
+            const node = nodes[act.nodeId];
+            if (node) {
+              nodes[act.nodeId] = {
                 ...node,
                 x: act.newX,
                 y: act.newY,
-              },
-            };
-          });
-          break;
-
-        case "CONNECT_NODES":
-          setNodes((prev) => {
-            const child = prev[act.childId];
-            const parent = prev[act.parentId];
-            if (!child || !parent) return prev;
-            
-            const next = { ...prev };
-            
-            // 移除旧的父子关系
-            if (child.parentId && next[child.parentId]) {
-              const oldParent = next[child.parentId];
-              next[child.parentId] = {
-                ...oldParent,
-                children: oldParent.children.filter((c) => c !== act.childId),
               };
             }
-            
-            // 建立新的父子关系
-            next[act.parentId] = {
-              ...parent,
-              children: parent.children.includes(act.childId)
-                ? parent.children
-                : [...parent.children, act.childId],
-            };
-            
-            next[act.childId] = {
-              ...child,
-              parentId: act.parentId,
-            };
-            
-            return next;
-          });
-          
-          setEdges((prev) => {
-            const withoutOld = prev.filter(
-              ([p, c]) => !(c === act.childId && p !== act.parentId)
-            );
-            const exists = withoutOld.some(
-              ([p, c]) => p === act.parentId && c === act.childId
-            );
-            return exists ? withoutOld : [...withoutOld, [act.parentId, act.childId] as [string, string]];
-          });
-          break;
+            break;
+          }
 
-        case "DISCONNECT_NODES":
-          setNodes((prev) => {
-            const child = prev[act.childId];
-            if (!child || child.parentId !== act.parentId) return prev;
-            
-            const next = { ...prev };
-            const parent = next[act.parentId];
-            
-            if (parent) {
-              next[act.parentId] = {
+          case "CONNECT_NODES": {
+            const child = nodes[act.childId];
+            const parent = nodes[act.parentId];
+            if (child && parent) {
+              // 移除旧的父子关系
+              if (child.parentId && nodes[child.parentId]) {
+                const oldParent = nodes[child.parentId];
+                nodes[child.parentId] = {
+                  ...oldParent,
+                  children: oldParent.children.filter((c) => c !== act.childId),
+                };
+              }
+              
+              // 建立新的父子关系
+              nodes[act.parentId] = {
                 ...parent,
-                children: parent.children.filter((c) => c !== act.childId),
+                children: parent.children.includes(act.childId)
+                  ? parent.children
+                  : [...parent.children, act.childId],
+              };
+              
+              nodes[act.childId] = {
+                ...child,
+                parentId: act.parentId,
               };
             }
-            
-            next[act.childId] = {
-              ...child,
-              parentId: null,
-            };
-            
-            return next;
-          });
-          
-          setEdges((prev) =>
-            prev.filter(([p, c]) => !(p === act.parentId && c === act.childId))
-          );
-          break;
+            break;
+          }
 
-        case "UPDATE_NODE_TEXT":
-          setNodes((prev) => {
-            const node = prev[act.nodeId];
-            if (!node) return prev;
-            return {
-              ...prev,
-              [act.nodeId]: {
+          case "DISCONNECT_NODES": {
+            const child = nodes[act.childId];
+            if (child && child.parentId === act.parentId) {
+              const parent = nodes[act.parentId];
+              
+              if (parent) {
+                nodes[act.parentId] = {
+                  ...parent,
+                  children: parent.children.filter((c) => c !== act.childId),
+                };
+              }
+              
+              nodes[act.childId] = {
+                ...child,
+                parentId: null,
+              };
+            }
+            break;
+          }
+
+          case "UPDATE_NODE_TEXT": {
+            const node = nodes[act.nodeId];
+            if (node) {
+              nodes[act.nodeId] = {
                 ...node,
                 short: act.newText,
                 full: act.newFull || act.newText,
-              },
-            };
-          });
-          break;
+              };
+            }
+            break;
+          }
 
-        case "BATCH":
-          // 递归处理批量操作
-          act.actions.forEach((subAction) =>
-            applyHistoryAction(subAction, isUndo)
-          );
-          break;
-
-        case "DELETE_MULTIPLE_NODES":
-          // 删除多个节点
-          setNodes((prev) => {
-            const updated = { ...prev };
+          case "DELETE_MULTIPLE_NODES":
             act.deletedNodes.forEach(({ id }) => {
-              delete updated[id];
+              delete nodes[id];
             });
-            return updated;
-          });
-          setEdges((prev) =>
-            prev.filter(
+            break;
+
+          case "EXPAND_NODE":
+            act.newNodes.forEach(({ id, data }) => {
+              nodes[id] = data;
+            });
+            break;
+        }
+      }
+      
+      return nodes;
+    });
+
+    // 批量处理边的变化
+    setEdges((prevEdges) => {
+      let edges = [...prevEdges];
+      
+      for (const act of flatActions) {
+        switch (act.type) {
+          case "DELETE_NODE":
+            edges = edges.filter(([p, c]) => p !== act.nodeId && c !== act.nodeId);
+            break;
+
+          case "CONNECT_NODES": {
+            // 移除旧的连接
+            edges = edges.filter(
+              ([p, c]) => !(c === act.childId && p !== act.parentId)
+            );
+            // 添加新的连接（如果不存在）
+            const exists = edges.some(
+              ([p, c]) => p === act.parentId && c === act.childId
+            );
+            if (!exists) {
+              edges.push([act.parentId, act.childId] as [string, string]);
+            }
+            break;
+          }
+
+          case "DISCONNECT_NODES":
+            edges = edges.filter(([p, c]) => !(p === act.parentId && c === act.childId));
+            break;
+
+          case "DELETE_MULTIPLE_NODES":
+            edges = edges.filter(
               ([p, c]) =>
                 !act.deletedNodes.some(({ id }) => id === p || id === c)
-            )
-          );
-          break;
+            );
+            break;
 
-        case "EXPAND_NODE":
-          // 扩展节点
-          setNodes((prev) => {
-            const updated = { ...prev };
-            act.newNodes.forEach(({ id, data }) => {
-              updated[id] = data;
-            });
-            return updated;
-          });
-          setEdges((prev) => [...prev, ...act.newEdges]);
-          break;
+          case "EXPAND_NODE":
+            edges.push(...act.newEdges);
+            break;
+        }
       }
-    }
+      
+      return edges;
+    });
   }, []);
 
   // 撤销函数
@@ -479,10 +465,8 @@ export default function Canvas({
       setHistoryManager(result.manager);
       applyHistoryAction(result.action, true);
       
-      // 触发物理引擎稳定
-      if (schedulePhysicsSettleRef.current) {
-        schedulePhysicsSettleRef.current(1500);
-      }
+      // 不再自动触发物理引擎，避免无限循环
+      // 用户可以通过移动节点来手动触发物理引擎
       
       showSnack("Undo successful", "success");
     }
@@ -500,10 +484,8 @@ export default function Canvas({
       setHistoryManager(result.manager);
       applyHistoryAction(result.action, false);
       
-      // 触发物理引擎稳定
-      if (schedulePhysicsSettleRef.current) {
-        schedulePhysicsSettleRef.current(1500);
-      }
+      // 不再自动触发物理引擎，避免无限循环
+      // 用户可以通过移动节点来手动触发物理引擎
       
       showSnack("Redo successful", "success");
     }
@@ -1000,7 +982,7 @@ export default function Canvas({
           const timeSinceLastUpdate = ts - s.lastUpdateTs;
           s.updateCounter++;
           if (s.updateCounter >= 3 || timeSinceLastUpdate >= 50 || draggingNodesRef.current.size > 0) {
-            setNodes(nextNodes);
+            setNodes(() => nextNodes);
             s.updateCounter = 0;
             s.lastUpdateTs = ts;
           }
@@ -1024,8 +1006,12 @@ export default function Canvas({
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       const target = now + duration;
       const current = physicsStateRef.current.settleUntil ?? 0;
-      physicsStateRef.current.settleUntil = Math.max(current, target);
-      ensurePhysicsActive();
+      
+      // 只在需要延长结算时间时才更新
+      if (target > current) {
+        physicsStateRef.current.settleUntil = target;
+        ensurePhysicsActive();
+      }
     });
   }, [ensurePhysicsActive]);
   
