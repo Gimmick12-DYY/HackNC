@@ -42,7 +42,6 @@ function HomeContent() {
   const [info, setInfo] = React.useState<InfoData | null>(null);
   const [collectorOpen, setCollectorOpen] = React.useState(false);
   const [collectorWidth, setCollectorWidth] = React.useState(360);
-  const [collectorSelectionMode, setCollectorSelectionMode] = React.useState(false);
   const defaultCollectorState: CollectorState = {
     argument: { main: null, evidences: [] },
     counter: { main: null, evidences: [] },
@@ -57,6 +56,13 @@ function HomeContent() {
   const [thoughtHistory, setThoughtHistory] = React.useState<ThoughtEntry[]>([]);
   const [activeThoughtId, setActiveThoughtId] = React.useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [canvasActions, setCanvasActions] = React.useState<{ openClearConfirm: () => void } | null>(null);
+  const handleRegisterCanvasActions = React.useCallback(
+    (actions: { openClearConfirm: () => void } | null) => {
+      setCanvasActions(actions);
+    },
+    []
+  );
 
   const generateButtonRef = React.useRef<HTMLButtonElement>(null);
   const infoButtonRef = React.useRef<HTMLButtonElement>(null);
@@ -109,7 +115,6 @@ function HomeContent() {
       };
     });
     setCollectorOpen(true);
-    setCollectorSelectionMode(false);
   }, []);
 
   const handleHistoryDelete = React.useCallback((id: string) => {
@@ -195,6 +200,10 @@ function HomeContent() {
   const sidebar = theme.ui.sidebar;
   const debateCardBackground = hexToRgba(theme.node.palette.default, 0.08);
   const debateCardBorder = hexToRgba(theme.node.palette.default, 0.18);
+  const clearButtonHover = generateButton.hover ?? generateButton.background;
+  const clearButtonBorder = hexToRgba(generateButton.text, 0.18);
+  const clearButtonDisabledBackground = hexToRgba(header.subtext, 0.12);
+  const clearButtonDisabledColor = hexToRgba(header.subtext, 0.6);
 
   return (
     <div
@@ -245,6 +254,49 @@ function HomeContent() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => canvasActions?.openClearConfirm()}
+            aria-label="Clear canvas"
+            title="Clear canvas"
+            disabled={!canvasActions}
+            className="rounded-full border px-3 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/70 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+            style={{
+              color: canvasActions ? generateButton.text : clearButtonDisabledColor,
+              borderColor: canvasActions ? clearButtonBorder : clearButtonDisabledColor,
+              background: canvasActions ? generateButton.background : clearButtonDisabledBackground,
+            }}
+            onMouseEnter={(event) => {
+              if (!canvasActions) return;
+              event.currentTarget.style.background = clearButtonHover;
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.background = canvasActions ? generateButton.background : clearButtonDisabledBackground;
+            }}
+            onFocus={(event) => {
+              if (!canvasActions) return;
+              event.currentTarget.style.background = clearButtonHover;
+            }}
+            onBlur={(event) => {
+              event.currentTarget.style.background = canvasActions ? generateButton.background : clearButtonDisabledBackground;
+            }}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-5 h-5"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"
               />
             </svg>
           </button>
@@ -382,8 +434,8 @@ function HomeContent() {
             <Canvas
               params={params}
               onRequestInfo={setInfo}
-              collectorSelectionMode={collectorSelectionMode}
-              onCollectorPickNode={handleAssignCollectorNode}
+              registerCanvasActions={handleRegisterCanvasActions}
+              onCollectorAdd={handleAssignCollectorNode}
             />
           </AttentionProvider>
         </main>
@@ -402,8 +454,6 @@ function HomeContent() {
             onClose={() => setCollectorOpen(false)}
             state={collector}
             onChangeState={setCollector}
-            selectionMode={collectorSelectionMode}
-            onToggleSelectionMode={() => setCollectorSelectionMode((v) => !v)}
             outputs={thoughtHistory}
             activeOutputId={activeThoughtId}
             onRecordOutput={handleRecordThought}
@@ -511,5 +561,6 @@ export default function Home() {
     </ThemeProvider>
   );
 }
+
 
 

@@ -33,8 +33,8 @@ type Props = {
   onRequestInfo?: (info: InfoData | null) => void;
   onDebateHistoryUpdate?: (history: DebateRecord[]) => void;
   registerDebateActions?: (actions: { deleteDebate: (id: string) => void }) => void;
-  collectorSelectionMode?: boolean;
-  onCollectorPickNode?: (n: NodeItem) => void;
+  registerCanvasActions?: (actions: { openClearConfirm: () => void } | null) => void;
+  onCollectorAdd?: (n: NodeItem) => void;
 };
 
 type NodeMap = Record<string, NodeItem>;
@@ -156,7 +156,14 @@ const NODE_HOLD_MOVE_THRESHOLD = 24;
 const PREVIEW_PLACEHOLDER_SIZE = 150;
 const MAX_GENERATED_COUNT = 12;
 
-export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, registerDebateActions, collectorSelectionMode = false, onCollectorPickNode }: Props) {
+export default function Canvas({
+  params,
+  onRequestInfo,
+  onDebateHistoryUpdate,
+  registerDebateActions,
+  registerCanvasActions,
+  onCollectorAdd,
+}: Props) {
   const [nodes, setNodes] = useState<NodeMap>({});
   const [edges, setEdges] = useState<Array<[string, string]>>([]); // [parent, child]
   const [groupAssignments, setGroupAssignments] = useState<Record<string, string>>({});
@@ -229,15 +236,34 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
   const [topBanner, setTopBanner] = useState<{ open: boolean; text: string }>({ open: false, text: "" });
   const [snack, setSnack] = useState<{ open: boolean; text: string; severity: 'info' | 'warning' | 'error' | 'success' }>({ open: false, text: '', severity: 'info' });
   const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const confirmClearButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const showBanner = useCallback((text: string) => setTopBanner({ open: true, text }), []);
   const hideBanner = useCallback(() => setTopBanner({ open: false, text: '' }), []);
   const showSnack = useCallback((text: string, severity: 'info' | 'warning' | 'error' | 'success' = 'info') => {
     setSnack({ open: true, text, severity });
   }, []);
+  const openClearConfirm = useCallback(() => setClearConfirmOpen(true), []);
+  const closeClearConfirm = useCallback(() => setClearConfirmOpen(false), []);
+
+  useEffect(() => {
+    if (!registerCanvasActions) return;
+    registerCanvasActions({ openClearConfirm });
+    return () => {
+      registerCanvasActions(null);
+    };
+  }, [registerCanvasActions, openClearConfirm]);
 
   const { theme } = useTheme();
   const floatingButton = theme.ui.floatingButton;
+  const sidebar = theme.ui.sidebar;
+  const clearButton = theme.ui.generateButton;
+  const clearButtonIndicator = clearButton.indicator ?? clearButton.text;
+  const clearButtonHover = clearButton.hover ?? clearButton.background;
+  const cancelButtonBg = hexToRgba(sidebar.textSecondary, 0.08);
+  const cancelButtonHoverBg = hexToRgba(sidebar.textSecondary, 0.12);
+  const cancelButtonBorder = hexToRgba(sidebar.textSecondary, 0.3);
 
   const { distances, focusedNodeId, setFocusedNode, recomputeDistances } = useAttention();
   
@@ -278,6 +304,24 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
         : floatingButton.background;
     }
   }, [instructionsOpen, floatingButton]);
+  useEffect(() => {
+    if (!clearConfirmOpen) return;
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeClearConfirm();
+      }
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [clearConfirmOpen, closeClearConfirm]);
+  useEffect(() => {
+    if (clearConfirmOpen) {
+      confirmClearButtonRef.current?.focus();
+    }
+  }, [clearConfirmOpen]);
   const expandMenuRef = useRef<HTMLDivElement | null>(null);
   const expandSliderRef = useRef<HTMLDivElement | null>(null);
   const expandMenuPointerRef = useRef<{ active: boolean; sliderVisible: boolean; startX: number; source: "menu" | "slider" | null }>({ active: false, sliderVisible: false, startX: 0, source: null });
@@ -1059,6 +1103,65 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
     resetPreviewPointerTracking();
   }, [resetPreviewPointerTracking]);
 
+  const handleClearAllNodes = useCallback(() => {
+    cancelNodeHold();
+    clearPreview();
+    closeInputOverlay();
+    setContextMenu(null);
+    setMultiSelectMenu(null);
+    setPendingConnection(null);
+    hideBanner();
+    setSelectionRect({ active: false, start: null, current: null });
+    const emptySelection = new Set<string>();
+    setSelectedIds(emptySelection);
+    selectedIdsRef.current = emptySelection;
+    setNodes({});
+    nodesRef.current = {};
+    setEdges([]);
+    edgesRef.current = [];
+    setGroupAssignments({});
+    setDebateHistory({});
+    commitFocus(null);
+    hoveredNodeIdRef.current = null;
+    committedFocusIdRef.current = null;
+    draggingNodesRef.current.clear();
+    dragPendingRef.current.clear();
+    canvasPointerIdRef.current = null;
+    setExpandOverlay({
+      open: false,
+      nodeId: null,
+      text: "",
+      count: Math.max(1, params.nodeCount || 3),
+    });
+    setExpandSliderVisible(false);
+    setIsPanning(false);
+    setPanStart(null);
+    setScale(1);
+    setOffsetX(0);
+    setOffsetY(0);
+    idRef.current = 0;
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    schedulePhysicsSettle();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(GRAPH_STORAGE_KEY);
+    }
+    closeClearConfirm();
+    showSnack("Canvas cleared", "success");
+  }, [
+    cancelNodeHold,
+    clearPreview,
+    closeClearConfirm,
+    closeInputOverlay,
+    commitFocus,
+    hideBanner,
+    params.nodeCount,
+    schedulePhysicsSettle,
+    showSnack,
+  ]);
+
   useEffect(() => {
     const handleShiftDown = (event: KeyboardEvent) => {
       if (event.key !== "Shift") return;
@@ -1734,16 +1837,6 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
 
   // 点击节点：单选并打开信息
   const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
-    // Collector selection mode: collect and exit early
-    if (collectorSelectionMode) {
-      const node = nodes[id];
-      if (node) {
-        onCollectorPickNode?.(node);
-        showSnack(`Collected "${node.full || node.text || node.phrase || node.short || node.id}"`, "success");
-      }
-      event?.stopPropagation();
-      return;
-    }
     if (pendingConnection) {
       const success = connectNodes(pendingConnection.childId, id);
       if (success) {
@@ -1775,7 +1868,7 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
     const s = new Set<string>([id]);
     setSelectedIds(s);
     commitFocus(id);
-  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection, collectorSelectionMode, nodes, onCollectorPickNode, showSnack]);
+  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection, nodes, showSnack]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
@@ -1858,6 +1951,14 @@ export default function Canvas({ params, onRequestInfo, onDebateHistoryUpdate, r
           openExpandOverlay(nodeId);
         });
         break;
+      case 'collect': {
+        const node = nodes[nodeId];
+        if (node) {
+          onCollectorAdd?.(node);
+          showSnack(`Collected "${node.full || node.text || node.phrase || node.short || node.id}"`, "success");
+        }
+        break;
+      }
       case 'connect':
         setPendingConnection({ childId: nodeId });
         showSnack('Select another node to complete the connection', 'info');
@@ -3120,6 +3221,134 @@ Respond with valid JSON only.`;
         <div className="pointer-events-none absolute inset-0 bg-slate-950/12 transition-opacity duration-150" />
       )}
 
+      {typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            {clearConfirmOpen && (
+              <>
+                <motion.div
+                  key="clear-confirm-backdrop"
+                  className="fixed inset-0 z-[94] bg-slate-950/60 backdrop-blur-sm"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={closeClearConfirm}
+                />
+                <motion.div
+                  key="clear-confirm-dialog"
+                  className="fixed inset-0 z-[95] flex items-center justify-center px-6"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="clear-canvas-title"
+                >
+                  <div
+                    className="w-full max-w-md rounded-2xl border shadow-xl space-y-6 p-6"
+                    style={{
+                      background: sidebar.cardBackground,
+                      borderColor: sidebar.cardBorder,
+                      color: sidebar.textPrimary,
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className="flex h-12 w-12 items-center justify-center rounded-full shadow-inner"
+                        style={{
+                          background: hexToRgba(clearButtonIndicator, 0.18),
+                          color: clearButtonIndicator,
+                        }}
+                        aria-hidden
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth={1.5}
+                          stroke="currentColor"
+                          className="w-6 h-6"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"
+                          />
+                        </svg>
+                      </div>
+                      <div className="space-y-1">
+                        <h3
+                          id="clear-canvas-title"
+                          className="text-lg font-semibold"
+                          style={{ color: sidebar.textPrimary }}
+                        >
+                          Clear canvas?
+                        </h3>
+                        <p className="text-sm" style={{ color: sidebar.textSecondary }}>
+                          This removes all nodes, connections, and debate history from the current canvas. This action cannot be undone.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={closeClearConfirm}
+                        className="rounded-full border px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/70"
+                        style={{
+                          color: sidebar.textSecondary,
+                          borderColor: cancelButtonBorder,
+                          background: cancelButtonBg,
+                        }}
+                        onMouseEnter={(event) => {
+                          event.currentTarget.style.background = cancelButtonHoverBg;
+                        }}
+                        onMouseLeave={(event) => {
+                          event.currentTarget.style.background = cancelButtonBg;
+                        }}
+                        onFocus={(event) => {
+                          event.currentTarget.style.background = cancelButtonHoverBg;
+                        }}
+                        onBlur={(event) => {
+                          event.currentTarget.style.background = cancelButtonBg;
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        ref={confirmClearButtonRef}
+                        onClick={handleClearAllNodes}
+                        className="rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/70"
+                        style={{
+                          background: clearButton.background,
+                          color: clearButton.text,
+                          border: `1px solid ${hexToRgba(clearButton.text, 0.25)}`,
+                        }}
+                        onMouseEnter={(event) => {
+                          event.currentTarget.style.background = clearButtonHover;
+                        }}
+                        onMouseLeave={(event) => {
+                          event.currentTarget.style.background = clearButton.background;
+                        }}
+                        onFocus={(event) => {
+                          event.currentTarget.style.background = clearButtonHover;
+                        }}
+                        onBlur={(event) => {
+                          event.currentTarget.style.background = clearButton.background;
+                        }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
       {multiSelectMenu && typeof document !== "undefined" && createPortal(
         <div
           ref={(node) => {
@@ -3216,6 +3445,29 @@ Respond with valid JSON only.`;
                 <InfoOutlinedIcon fontSize="small" className="text-sky-600" />
                 Get info
               </button>
+              {onCollectorAdd && (
+                <button
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                  onClick={() => handleNodeMenuAction('collect', contextMenu.nodeId!)}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="w-4 h-4 text-emerald-500"
+                    aria-hidden
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672M12 2.25V4.5m5.834.166-1.591 1.591M20.25 10.5H18M7.757 14.743l-1.59 1.59M6 10.5H3.75m4.007-4.243-1.59-1.59"
+                    />
+                  </svg>
+                  Add to Collector
+                </button>
+              )}
               {Object.keys(nodes).length > 1 && (
               <button
                 className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"

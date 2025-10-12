@@ -20,8 +20,6 @@ type Props = {
   onClose: () => void;
   state: CollectorState;
   onChangeState: (next: CollectorState) => void;
-  selectionMode: boolean;
-  onToggleSelectionMode: () => void;
   outputs: ThoughtEntry[];
   activeOutputId: string | null;
   onRecordOutput: (entry: ThoughtEntry) => void;
@@ -161,8 +159,6 @@ export default function CollectorPanel({
   onClose,
   state,
   onChangeState,
-  selectionMode,
-  onToggleSelectionMode,
   outputs,
   activeOutputId,
   onRecordOutput,
@@ -174,6 +170,13 @@ export default function CollectorPanel({
   const accentBg = hexToRgba(accent, 0.12);
   const accentBgHover = hexToRgba(accent, 0.2);
   const dropAccent = hexToRgba(accent, 0.45);
+  const [isHideHovered, setIsHideHovered] = React.useState(false);
+  const hideButtonBackground = isHideHovered
+    ? hexToRgba(sidebar.headerText, 0.18)
+    : sidebar.cardBackground;
+  const hideButtonBorder = isHideHovered
+    ? hexToRgba(sidebar.headerText, 0.32)
+    : sidebar.cardBorder;
 
   const createDraft = React.useCallback((): CollectorState => ({
     argument: {
@@ -961,37 +964,35 @@ export default function CollectorPanel({
         <div>
           <h2 className="text-lg font-semibold" style={{ color: sidebar.headerText }}>Collector</h2>
           <p className="text-sm mt-1" style={{ color: sidebar.headerSubtext }}>
-            Select nodes to collect them here.
+            Drop or right-click a node to collect it.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onToggleSelectionMode}
-            className="text-sm rounded-full border px-3 py-1.5 transition-colors shadow-sm flex items-center gap-2"
-            style={{ color: sidebar.headerText, borderColor: selectionMode ? accent : sidebar.cardBorder, background: selectionMode ? accentBg : sidebar.cardBackground }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = selectionMode ? accentBgHover : accentBg; (e.currentTarget as HTMLButtonElement).style.borderColor = accent; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = selectionMode ? accentBg : sidebar.cardBackground; (e.currentTarget as HTMLButtonElement).style.borderColor = selectionMode ? accent : sidebar.cardBorder; }}>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-4 h-4"
-              aria-hidden
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672ZM12 2.25V4.5m5.834.166-1.591 1.591M20.25 10.5H18M7.757 14.743l-1.59 1.59M6 10.5H3.75m4.007-4.243-1.59-1.59"
-              />
-            </svg>
-            <span>{selectionMode ? "Selecting…" : "Select nodes"}</span>
-          </button>
-          <button type="button" onClick={onClose} className="text-sm rounded-full border px-3 py-1.5 transition-colors shadow-sm"
-            style={{ color: sidebar.headerText, borderColor: sidebar.cardBorder, background: sidebar.cardBackground }}>Hide</button>
-        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Hide collector panel"
+          onPointerEnter={() => setIsHideHovered(true)}
+          onPointerLeave={() => setIsHideHovered(false)}
+          onFocus={() => setIsHideHovered(true)}
+          onBlur={() => setIsHideHovered(false)}
+          className="rounded-full border p-2 transition-colors shadow-sm flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/70"
+          style={{
+            color: sidebar.headerText,
+            borderColor: hideButtonBorder,
+            background: hideButtonBackground,
+          }}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="w-5 h-5"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5" />
+          </svg>
+        </button>
       </div>
 
       <div className="flex-1 overflow-auto p-3 space-y-3">
@@ -1147,7 +1148,7 @@ export default function CollectorPanel({
                 )}
               </div>
               <div className="text-[11px] mt-2" style={{ color: sidebar.textMuted }}>
-                Double-click any chip to move it back to Collected Nodes.
+                Drop nodes to add them as evidences.
               </div>
             </div>
           </div>
@@ -1219,7 +1220,7 @@ export default function CollectorPanel({
               <div className="h-[3px] rounded-full" style={{ background: dropAccent }} />
             )}
             <div className="text-[11px] mt-2" style={{ color: sidebar.textMuted }}>
-              Double-click any chip to move it back to Collected Nodes.
+              Add nodes to create a script outline.
             </div>
           </div>
         </div>
@@ -1233,7 +1234,7 @@ export default function CollectorPanel({
               {renderGenerateButton("debate")}
             </div>
             <p className="text-[12px] mb-2" style={{ color: sidebar.textMuted }}>
-              Drop nodes to add them as debate participants. Double-click a chip to send it back to the pool.
+              Drop nodes to add them as debate participants.
             </p>
             <div
               ref={(el) => { listRefs.current["debate-participants"] = el; }}
