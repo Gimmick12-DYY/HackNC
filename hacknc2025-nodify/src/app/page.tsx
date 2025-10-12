@@ -16,6 +16,8 @@ import {
 import { AttentionProvider } from "@/components/Attention";
 import { ThemeProvider, useTheme, Themes, hexToRgba } from "@/components/Themes";
 import InfoRoundedIcon from "@mui/icons-material/InfoRounded";
+import dynamic from "next/dynamic";
+const BackgroundFX = dynamic(() => import("@/components/BackgroundFX"), { ssr: false });
 
 const MODE_LABELS: Record<CollectorMode, string> = {
   argument: "Argument",
@@ -437,7 +439,10 @@ function HomeContent() {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        <main className="flex-1 overflow-hidden">
+        <main className="flex-1 overflow-hidden relative">
+          <div className="absolute inset-0" style={{ zIndex: 0 }}>
+            <BackgroundFX />
+          </div>
           <AttentionProvider>
             <Canvas
               params={params}

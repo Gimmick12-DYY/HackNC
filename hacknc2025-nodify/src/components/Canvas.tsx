@@ -27,6 +27,7 @@ import { Button, Snackbar, Alert } from "@mui/material";
 import { useAttention } from "./Attention";
 import { getNodeColor } from "@/utils/getNodeColor";
 import { useTheme, hexToRgba } from "./Themes";
+import BackgroundFX from "./BackgroundFX";
 
 type Props = {
   params: DashboardParams;
@@ -3056,12 +3057,17 @@ Respond with valid JSON only.`;
         ...backgroundStyles,
       }}
     >
+      {/* FX above canvas background but below nodes/edges */}
+      <div className="absolute inset-0" style={{ zIndex: 1, pointerEvents: 'none' }}>
+        <BackgroundFX />
+      </div>
       {/* 变换容器 - 应用缩放和平移 */}
       <div
         className="absolute inset-0"
         style={{
           transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
-          transformOrigin: '0 0'
+          transformOrigin: '0 0',
+          zIndex: 2
         }}
         onClick={onCanvasClick}
         onContextMenu={onCanvasContextMenu}
