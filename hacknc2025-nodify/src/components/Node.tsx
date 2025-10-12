@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
@@ -68,12 +68,25 @@ export default function NodeCard({
   const baseDiameter = Math.max(8, Math.round(baseDiameterRaw));
   const nodeColor = getNodeColor(node.type, theme);
   const minimizedFill = node.dotColor ?? nodeColor;
+  const backgroundAlphaBase =
+    typeof theme.node.backgroundAlpha === "number"
+      ? theme.node.backgroundAlpha
+      : 0.3;
+  const backgroundAlphaBoosted = Math.min(
+    1,
+    backgroundAlphaBase + (node.minimized ? 0 : 0.28)
+  );
   const nodeBackgroundColor = node.minimized
     ? minimizedFill
-    : hexToRgba(nodeColor, theme.node.backgroundAlpha);
+    : hexToRgba(nodeColor, backgroundAlphaBoosted);
+  const borderAlphaBase =
+    typeof theme.node.borderAlpha === "number"
+      ? theme.node.borderAlpha
+      : 0.5;
+  const borderAlphaBoosted = Math.min(1, borderAlphaBase + 0.2);
   const baseBorderColor = node.minimized
     ? minimizedFill
-    : hexToRgba(nodeColor, theme.node.borderAlpha);
+    : hexToRgba(nodeColor, borderAlphaBoosted);
   const isFocused = focusedNodeId === node.id;
   const activeBorderColor =
     highlight || isFocused
@@ -90,16 +103,35 @@ export default function NodeCard({
     attentionLevel !== null
       ? opacityLevels[attentionLevel] ?? defaultOpacity
       : defaultOpacity;
+  const opacityBoost = 0.22;
+  const adjustedOpacity = Math.min(1, levelOpacity + opacityBoost);
   const nodeOpacity =
-    node.minimized || highlight || isFocused ? 1 : levelOpacity;
+    node.minimized || highlight || isFocused ? 1 : adjustedOpacity;
   const transition = NodeVisualConfig.TRANSITION;
-  const nodeShadow =
+  const baseShadow =
     highlight || isFocused
       ? theme.node.shadow.highlight
       : theme.node.shadow.default;
+  const minimizedGlow =
+    node.minimized && !(highlight || isFocused)
+      ? [
+          baseShadow,
+          `0 0 0 2px ${hexToRgba(nodeColor, 0.4)}`,
+          `0 0 18px ${hexToRgba(nodeColor, 0.28)}`,
+        ].join(", ")
+      : baseShadow;
+  const nodeShadow = minimizedGlow;
   const textColor = node.minimized
     ? theme.node.textColor.minimized
     : theme.node.textColor.regular;
+  const minimizedIndicatorColor = hexToRgba(
+    theme.node.textColor.minimized,
+    0.85
+  );
+  const minimizedIndicatorGlow = hexToRgba(
+    theme.node.textColor.minimized,
+    0.45
+  );
   const displayEmoji = node.emoji?.trim();
   const ariaLabel = node.full || node.text || "Idea node";
   const focusedLabelText =
@@ -441,7 +473,21 @@ export default function NodeCard({
           }}
           className="flex h-full w-full items-center justify-center px-2"
         >
-          {node.minimized ? null : (
+          {node.minimized ? (
+            <>
+              <span
+                aria-hidden
+                className="block rounded-full"
+                style={{
+                  width: 8,
+                  height: 8,
+                  background: minimizedIndicatorColor,
+                  boxShadow: `0 0 6px ${minimizedIndicatorGlow}`,
+                }}
+              />
+              <span className="sr-only">{ariaLabel}</span>
+            </>
+          ) : (
             <div
               className="flex h-full w-full items-center justify-center"
               aria-label={ariaLabel}

@@ -1,7 +1,7 @@
 import { NodeVisualConfig } from "@/config/nodeVisualConfig";
 import { NodeItem } from "@/components/types";
 
-export const VISUAL_NODE_MINIMIZED_SIZE = 24;
+export const VISUAL_NODE_MINIMIZED_SIZE = 30;
 
 export const getVisualDiameter = (
   node: NodeItem,
