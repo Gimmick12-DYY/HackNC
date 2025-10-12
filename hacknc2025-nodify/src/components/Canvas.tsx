@@ -1869,7 +1869,7 @@ export default function Canvas({
     const s = new Set<string>([id]);
     setSelectedIds(s);
     commitFocus(id);
-  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection, nodes, showSnack]);
+  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection]);
 
   // 双击节点：进入编辑
   const handleNodeDoubleClick = useCallback((id: string) => {
