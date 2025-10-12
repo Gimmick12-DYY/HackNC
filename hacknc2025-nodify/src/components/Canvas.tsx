@@ -73,6 +73,8 @@ type ExpandOverlayState = {
 
 type PendingConnectionState = {
   childId: string;
+  mouseX?: number;
+  mouseY?: number;
 };
 
 type SerializedGraphNode = {
@@ -1833,46 +1835,6 @@ export default function Canvas({
     [computeSizeByDepth, schedulePhysicsSettle, showSnack]
   );
 
-  // 点击节点：单选并打开信息
-  const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
-    if (pendingConnection) {
-      const success = connectNodes(pendingConnection.childId, id);
-      if (success) {
-        const s = new Set<string>([pendingConnection.childId, id]);
-        setSelectedIds(s);
-        commitFocus(id);
-        setPendingConnection(null);
-        setMultiSelectMenu(null);
-      }
-      return;
-    }
-    if (event?.shiftKey) {
-      const currentSelection = selectedIdsRef.current;
-      const nextSelection = new Set(currentSelection);
-      if (nextSelection.has(id)) {
-        nextSelection.delete(id);
-      } else {
-        nextSelection.add(id);
-      }
-      setSelectedIds(nextSelection);
-      if (nextSelection.size > 0) {
-        commitFocus(id);
-      } else {
-        commitFocus(null);
-      }
-      return;
-    }
-    setMultiSelectMenu(null);
-    const s = new Set<string>([id]);
-    setSelectedIds(s);
-    commitFocus(id);
-  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection]);
-
-  // 双击节点：进入编辑
-  const handleNodeDoubleClick = useCallback((id: string) => {
-    handleNodeClick(id);
-  }, [handleNodeClick]);
-
   // 文本更新（来自 Node 内联编辑）
   const handleUpdateText = useCallback(
     (id: string, value: string) => {
@@ -1922,6 +1884,48 @@ export default function Canvas({
     },
     [onRequestInfo, buildInfoData, handleUpdateText]
   );
+  
+  // 点击节点：单选并打开信息
+  const handleNodeClick = useCallback((id: string, event?: React.MouseEvent) => {
+    if (pendingConnection) {
+      const success = connectNodes(pendingConnection.childId, id);
+      if (success) {
+        const s = new Set<string>([pendingConnection.childId, id]);
+        setSelectedIds(s);
+        commitFocus(id);
+        setPendingConnection(null);
+        setMultiSelectMenu(null);
+      }
+      return;
+    }
+    if (event?.shiftKey) {
+      const currentSelection = selectedIdsRef.current;
+      const nextSelection = new Set(currentSelection);
+      if (nextSelection.has(id)) {
+        nextSelection.delete(id);
+      } else {
+        nextSelection.add(id);
+      }
+      setSelectedIds(nextSelection);
+      if (nextSelection.size > 0) {
+        commitFocus(id);
+      } else {
+        commitFocus(null);
+      }
+      return;
+    }
+    setMultiSelectMenu(null);
+    const s = new Set<string>([id]);
+    setSelectedIds(s);
+    commitFocus(id);
+    // 打开节点的 info 面板
+    emitInfoFor(id);
+  }, [commitFocus, connectNodes, pendingConnection, setPendingConnection, emitInfoFor]);
+
+  // 双击节点：进入编辑
+  const handleNodeDoubleClick = useCallback((id: string) => {
+    handleNodeClick(id);
+  }, [handleNodeClick]);
   
   const handleNodeMenuAction = (action: string, nodeId: string) => {
     const actionKey = `${action}-${nodeId}`;
@@ -2639,6 +2643,23 @@ Respond with valid JSON only.`;
     };
   }, [contextMenu, onResetCamera, pendingConnection, setPendingConnection, showSnack]);
 
+  // 处理待连接状态时的鼠标移动，更新连接线终点
+  useEffect(() => {
+    if (!pendingConnection) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const worldPos = screenToCanvas(e.clientX, e.clientY);
+      setPendingConnection((current) =>
+        current ? { ...current, mouseX: worldPos.x, mouseY: worldPos.y } : null
+      );
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, [pendingConnection, screenToCanvas]);
+
   useEffect(() => cancelNodeHold, [cancelNodeHold]);
 
   // 全局鼠标事件处理（平移功能）
@@ -3210,6 +3231,40 @@ Respond with valid JSON only.`;
                 />
               );
             })}
+          
+          {/* 渲染待连接线 - 从源节点跟随鼠标 */}
+          {pendingConnection && pendingConnection.mouseX !== undefined && pendingConnection.mouseY !== undefined && (() => {
+            const sourceNode = nodes[pendingConnection.childId];
+            if (!sourceNode) return null;
+            
+            // 计算源节点的中心点
+            const level0 = (NodeVisualConfig.SIZE_LEVELS as Record<number, number>)[0];
+            const getBaseDiameter = (n: NodeItem) => {
+              if (n.minimized) return VISUAL_NODE_MINIMIZED_SIZE;
+              const target = getVisualDiameter(n, distances[n.id]);
+              const defaultBase = level0 ?? target;
+              return n.size ?? defaultBase;
+            };
+            const sourceBase = getBaseDiameter(sourceNode);
+            const sourceX = sourceNode.x + sourceBase / 2;
+            const sourceY = sourceNode.y + sourceBase / 2;
+            
+            return (
+              <motion.line
+                x1={sourceX}
+                y1={sourceY}
+                x2={pendingConnection.mouseX}
+                y2={pendingConnection.mouseY}
+                stroke={linePalette.preview.stroke}
+                strokeWidth={previewStrokeWidth}
+                strokeDasharray="8 4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0.8 }}
+                style={{ vectorEffect: 'non-scaling-stroke' }}
+                markerEnd="url(#arrow-default)"
+              />
+            );
+          })()}
         </svg>
 
         {previewState.placeholders.map((placeholder) => (

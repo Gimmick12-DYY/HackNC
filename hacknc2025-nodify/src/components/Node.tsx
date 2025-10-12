@@ -52,8 +52,10 @@ export default function NodeCard({
   const { theme } = useTheme();
   const { focusedNodeId, setFocusedNode } = useAttention();
   const [dragging, setDragging] = useState(false);
+  const [isDragStarted, setIsDragStarted] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragStartPositionRef = useRef({ x: 0, y: 0 });
+  const pointerDownPositionRef = useRef({ x: 0, y: 0 });
   const targetDiameterRaw = getVisualDiameter(
     node,
     Number.isFinite(distance) ? (distance as number) : undefined
@@ -112,6 +114,12 @@ export default function NodeCard({
     highlight || isFocused
       ? theme.node.shadow.highlight
       : theme.node.shadow.default;
+  
+  // 增强选中节点的高光效果
+  const enhancedShadow = (highlight || isFocused) 
+    ? `${baseShadow}, 0 0 0 2px ${hexToRgba(activeBorderColor, 0.5)}, 0 0 20px ${hexToRgba(activeBorderColor, 0.5)}`
+    : baseShadow;
+    
   const minimizedGlow =
     node.minimized && !(highlight || isFocused)
       ? [
@@ -119,7 +127,7 @@ export default function NodeCard({
           `0 0 0 2px ${hexToRgba(nodeColor, 0.4)}`,
           `0 0 18px ${hexToRgba(nodeColor, 0.28)}`,
         ].join(", ")
-      : baseShadow;
+      : enhancedShadow;
   const nodeShadow = minimizedGlow;
   const textColor = node.minimized
     ? theme.node.textColor.minimized
@@ -255,6 +263,7 @@ export default function NodeCard({
   const onHoldStartRef = useRef(onHoldStart);
   const onHoldMoveRef = useRef(onHoldMove);
   const onHoldEndRef = useRef(onHoldEnd);
+  const onClickNodeRef = useRef(onClickNode);
   const dragPointerIdRef = useRef<number | null>(null);
   
   // Update refs when callbacks change
@@ -263,13 +272,14 @@ export default function NodeCard({
   onHoldStartRef.current = onHoldStart;
   onHoldMoveRef.current = onHoldMove;
   onHoldEndRef.current = onHoldEnd;
+  onClickNodeRef.current = onClickNode;
 
   // Use ref to store current offset to avoid dependency issues
   const offsetRef = useRef(offset);
   offsetRef.current = offset;
 
   useEffect(() => {
-    if (!dragging) return;
+    if (!isDragStarted) return;
 
     const pointerId = dragPointerIdRef.current;
     if (pointerId == null) return;
@@ -278,12 +288,28 @@ export default function NodeCard({
     const currentDragStartPosition = dragStartPositionRef.current;
     const nodeElement = ref.current;
     const nodeId = node.id;
+    
+    const DRAG_THRESHOLD = 3; // pixels
 
     const handlePointerMove = (e: PointerEvent) => {
       if (e.pointerId !== pointerId) return;
       if (e.pointerType !== "mouse") {
         e.preventDefault();
       }
+      
+      // Check if we've moved enough to be considered a drag
+      if (!dragging) {
+        const dx = e.clientX - pointerDownPositionRef.current.x;
+        const dy = e.clientY - pointerDownPositionRef.current.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance > DRAG_THRESHOLD) {
+          setDragging(true);
+        } else {
+          return; // Not dragging yet, don't move node
+        }
+      }
+      
       if (screenToCanvas) {
         const worldPos = screenToCanvas(e.clientX, e.clientY);
         onMoveRef.current(nodeId, worldPos.x - offsetRef.current.x, worldPos.y - offsetRef.current.y);
@@ -302,20 +328,43 @@ export default function NodeCard({
           /* ignore */
         }
       }
-      let finalX: number;
-      let finalY: number;
-      if (screenToCanvas) {
-        const worldPos = screenToCanvas(e.clientX, e.clientY);
-        finalX = worldPos.x - offsetRef.current.x;
-        finalY = worldPos.y - offsetRef.current.y;
-      } else {
-        finalX = e.clientX - offsetRef.current.x;
-        finalY = e.clientY - offsetRef.current.y;
-      }
-      onMoveEndRef.current(nodeId, finalX, finalY, currentDragStartPosition.x, currentDragStartPosition.y);
+      
+      // Always call onHoldEnd to cancel hold timer, regardless of whether we dragged
       onHoldEndRef.current?.({ nodeId, clientX: e.clientX, clientY: e.clientY });
+      
+      // Only call onMoveEnd if we actually dragged
+      if (dragging) {
+        let finalX: number;
+        let finalY: number;
+        if (screenToCanvas) {
+          const worldPos = screenToCanvas(e.clientX, e.clientY);
+          finalX = worldPos.x - offsetRef.current.x;
+          finalY = worldPos.y - offsetRef.current.y;
+        } else {
+          finalX = e.clientX - offsetRef.current.x;
+          finalY = e.clientY - offsetRef.current.y;
+        }
+        onMoveEndRef.current(nodeId, finalX, finalY, currentDragStartPosition.x, currentDragStartPosition.y);
+      } else {
+        // If we didn't drag, this was a click - trigger the click handler
+        // Create a synthetic React MouseEvent-like object
+        const syntheticEvent = {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          shiftKey: e.shiftKey,
+          ctrlKey: e.ctrlKey,
+          altKey: e.altKey,
+          metaKey: e.metaKey,
+          button: e.button,
+          stopPropagation: () => {},
+          preventDefault: () => {},
+        } as React.MouseEvent;
+        onClickNodeRef.current?.(nodeId, syntheticEvent);
+      }
+      
       dragPointerIdRef.current = null;
       setDragging(false);
+      setIsDragStarted(false);
     };
 
     window.addEventListener("pointermove", handlePointerMove, { passive: false });
@@ -327,7 +376,7 @@ export default function NodeCard({
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", finishDrag);
     };
-  }, [dragging, node.id, screenToCanvas]);
+  }, [isDragStarted, dragging, node.id, screenToCanvas]);
 
   const startDrag = (e: React.PointerEvent) => {
     // Don't start drag if clicking on TextField or input elements
@@ -346,12 +395,15 @@ export default function NodeCard({
     e.preventDefault();
     e.stopPropagation();
     
+    // Store pointer down position to detect actual drag
+    pointerDownPositionRef.current = { x: e.clientX, y: e.clientY };
+    
     // Capture the ACTUAL current position immediately when drag starts
     // This ensures we get the real position even if node is mid-animation
     const currentPosition = { x: node.x, y: node.y };
     dragStartPositionRef.current = currentPosition;
     
-    setDragging(true);
+    setIsDragStarted(true);
     dragPointerIdRef.current = e.pointerId;
     if (ref.current) {
       try {
@@ -449,8 +501,9 @@ export default function NodeCard({
         animate={{
           backgroundColor: nodeBackgroundColor,
           borderColor: activeBorderColor,
-          borderWidth: node.minimized ? 3 : highlight || isFocused ? 3 : 2,
+          borderWidth: node.minimized ? 3 : highlight || isFocused ? 4 : 2,
           borderStyle: "solid",
+          scale: highlight || isFocused ? 1.05 : 1,
         }}
         transition={{
           duration: (dragging || isGlobalDragging) ? 0 : transition.duration,

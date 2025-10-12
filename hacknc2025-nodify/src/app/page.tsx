@@ -156,11 +156,11 @@ function HomeContent() {
   }, [infoOpen]);
 
   React.useEffect(() => {
-    if (!infoOpen && info && !prevInfoRef.current) {
+    if (info && info !== prevInfoRef.current) {
       setInfoOpen(true);
     }
     prevInfoRef.current = info;
-  }, [info, infoOpen]);
+  }, [info]);
 
   React.useEffect(() => {
     if (!historyOpen) return;
