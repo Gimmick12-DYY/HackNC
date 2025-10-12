@@ -1,6 +1,6 @@
 # Nodify – Visual Knowledge Graph with AI Generation
 
-Nodify is a Next.js application for exploring ideas as a spatial knowledge graph. Create nodes on a canvas, connect and drag them with physics, expand ideas using an AI generator, and collect arguments/counter-arguments/scripts in a right-side panel designed for creative reasoning.
+Nodify is a Next.js application for exploring ideas and preparing debate topics as a spatial knowledge graph. Create nodes on a canvas, connect and drag them with physics, expand ideas using an AI generator, and collect arguments/counter-arguments/scripts in a right-side panel designed for creative reasoning.
 
 <img width="3230" height="1763" alt="image" src="https://github.com/user-attachments/assets/2ce0481c-f987-4066-9594-d11a554048e3" />
 <img width="3231" height="1765" alt="image" src="https://github.com/user-attachments/assets/a87f166a-6f8d-49b8-b8b9-f2f88c025ce2" />
