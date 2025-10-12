@@ -293,7 +293,7 @@ export default function Canvas({
 
     // 批量应用所有操作，只调用一次 setNodes 和 setEdges
     setNodes((prevNodes) => {
-      let nodes = { ...prevNodes };
+      const nodes = { ...prevNodes };
       
       for (const act of flatActions) {
         switch (act.type) {
@@ -539,6 +539,8 @@ export default function Canvas({
   const instructionsButtonRef = useRef<HTMLButtonElement | null>(null);
   const canvasPointerIdRef = useRef<number | null>(null);
   const schedulePhysicsSettleRef = useRef<((duration?: number) => void) | null>(null);
+  // 用于跟踪拖动开始时所有节点的位置，以便记录物理引擎引起的间接移动
+  const dragStartPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   useEffect(() => {
     if (instructionsButtonRef.current) {
@@ -2296,8 +2298,8 @@ export default function Canvas({
     
     switch (action) {
       case 'delete':
-        // Delete all selected nodes
-        nodeIds.forEach(id => onDelete?.(id));
+        // 使用批量删除功能，一次性删除所有选中的节点
+        onDeleteMultiple(nodeIds);
         showSnack(`Deleted ${nodeIds.length} nodes`, "success");
         setSelectedIds(new Set());
         break;
@@ -2389,6 +2391,16 @@ export default function Canvas({
         setIsDragging(true);
         physicsStateRef.current.settleUntil = null;
         ensurePhysicsActive();
+        
+        // 记录所有节点的初始位置，用于跟踪物理引擎引起的间接移动
+        dragStartPositionsRef.current.clear();
+        const currentNodes = nodesRef.current;
+        Object.keys(currentNodes).forEach(nodeId => {
+          const node = currentNodes[nodeId];
+          if (node) {
+            dragStartPositionsRef.current.set(nodeId, { x: node.x, y: node.y });
+          }
+        });
       }
       draggingNodesRef.current.add(id);
       // 如果是组拖拽，记录所有选中节点的原始位置
@@ -2568,25 +2580,53 @@ export default function Canvas({
       setIsDragging(false);
       physicsStateRef.current.settleUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 1000;
       ensurePhysicsActive();
+      
+      // 检查所有节点的位置变化，记录被物理引擎间接移动的节点
+      const moveActions: HistoryAction[] = [];
+      const currentNodes = nodesRef.current;
+      const threshold = 1; // 位置变化阈值（像素）
+      
+      dragStartPositionsRef.current.forEach((startPos, nodeId) => {
+        const currentNode = currentNodes[nodeId];
+        if (currentNode) {
+          const deltaX = Math.abs(currentNode.x - startPos.x);
+          const deltaY = Math.abs(currentNode.y - startPos.y);
+          
+          // 如果节点移动超过阈值，记录这个移动
+          if (deltaX > threshold || deltaY > threshold) {
+            moveActions.push({
+              type: "MOVE_NODE",
+              nodeId: nodeId,
+              oldX: startPos.x,
+              oldY: startPos.y,
+              newX: currentNode.x,
+              newY: currentNode.y,
+            });
+          }
+        }
+      });
+      
+      // 清空拖动位置快照
+      dragStartPositionsRef.current.clear();
+      
+      // 如果有多个节点移动，使用 BATCH 操作；如果只有一个，直接记录
+      if (moveActions.length > 1) {
+        recordHistoryAction({
+          type: "BATCH",
+          actions: moveActions,
+          description: "Move nodes with physics",
+        });
+      } else if (moveActions.length === 1) {
+        recordHistoryAction(moveActions[0]);
+      }
     }
+    
     // 清理 pending 帧
     if (dragFrameRef.current != null) {
       cancelAnimationFrame(dragFrameRef.current);
       dragFrameRef.current = null;
     }
     dragPendingRef.current.clear();
-    
-    // 记录历史（只有在真正移动了且有原始位置时才记录）
-    if (originalX !== undefined && originalY !== undefined && (originalX !== x || originalY !== y)) {
-      recordHistoryAction({
-        type: "MOVE_NODE",
-        nodeId: id,
-        oldX: originalX,
-        oldY: originalY,
-        newX: x,
-        newY: y,
-      });
-    }
   }, [previewState.parentId, ensurePhysicsActive, recordHistoryAction]);
 
   const onDelete = useCallback((id: string) => {
@@ -2652,6 +2692,102 @@ export default function Canvas({
       nodeId: id,
       nodeData: nodeToDelete,
       connectedEdges,
+    });
+  }, [commitFocus, resetPreviewPointerTracking, recordHistoryAction]);
+
+  // 批量删除节点（用于多选删除）
+  const onDeleteMultiple = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    
+    // 收集所有要删除的节点数据
+    const deletedNodes: Array<{ id: string; data: NodeItem }> = [];
+    const deletedEdges: Array<[string, string]> = [];
+    
+    // 收集节点数据
+    ids.forEach((id) => {
+      const node = nodesRef.current[id];
+      if (node) {
+        deletedNodes.push({ id, data: node });
+      }
+    });
+    
+    // 收集所有相关的边（去重）
+    const edgeSet = new Set<string>();
+    ids.forEach((id) => {
+      edgesRef.current
+        .filter(([parent, child]) => parent === id || child === id)
+        .forEach(([parent, child]) => {
+          const key = `${parent}|${child}`;
+          if (!edgeSet.has(key)) {
+            edgeSet.add(key);
+            deletedEdges.push([parent, child]);
+          }
+        });
+    });
+    
+    // 检查是否需要更新焦点
+    const needsNewFocus = ids.includes(committedFocusIdRef.current || '');
+    let nextFocus: string | null = null;
+    
+    // 批量删除节点
+    setNodes((prev) => {
+      const updated = { ...prev };
+      ids.forEach((id) => {
+        delete updated[id];
+      });
+      
+      // 如果需要新焦点，在这里计算
+      if (needsNewFocus) {
+        const remainingIds = Object.keys(updated);
+        nextFocus = remainingIds.length ? remainingIds[0] : null;
+      }
+      
+      return updated;
+    });
+    
+    // 在状态更新完成后调用 commitFocus
+    if (needsNewFocus) {
+      queueMicrotask(() => {
+        commitFocus(nextFocus);
+      });
+    }
+    
+    // 移除所有相关的边
+    setEdges((prev) =>
+      prev.filter(([parent, child]) => !ids.includes(parent) && !ids.includes(child))
+    );
+    
+    // 清除选中状态
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    
+    // 清理预览和连接状态
+    resetPreviewPointerTracking();
+    setPreviewState((prev) => {
+      if (prev.parentId && ids.includes(prev.parentId)) {
+        return {
+          parentId: null,
+          placeholders: [],
+          anchor: null,
+          holdStartClient: null,
+          pointerClient: null,
+        };
+      }
+      return prev;
+    });
+    
+    setPendingConnection((current) =>
+      current && ids.includes(current.childId) ? null : current
+    );
+    
+    // 记录批量删除的历史
+    recordHistoryAction({
+      type: "DELETE_MULTIPLE_NODES",
+      deletedNodes,
+      deletedEdges,
     });
   }, [commitFocus, resetPreviewPointerTracking, recordHistoryAction]);
 
